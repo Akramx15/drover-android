@@ -128,7 +128,7 @@ The verified release-library SHA-256 values produced by the pinned Windows x64
 build are:
 
 ```text
-arm64-v8a   be587789f9060e2e586312bc10abdaffaff5a9c25906522967a1abf59b2df9a8
-armeabi-v7a edca0c73a15d2dc3fc077bb6025368d8811497aa82d98060b1a52f49950ddf0c
-x86_64      6368dcff94c66af0c37bf2f133ecbe82720ed592fdb86c152c795ca8e385dfba
+arm64-v8a   3f1afb680a9174d4fa2a3817d86d1c730cd1b43fa45005386a1e2975a993f0cd
+armeabi-v7a fc5b5637b047595c6561acbd3dc78f86fc4bc000d0424bdc1861b7a096a46992
+x86_64      a66c4bf12352ad005e5119cc8e9306834ee7e6ca9b1de0ae3c97ef0d8e7becd3
 ```

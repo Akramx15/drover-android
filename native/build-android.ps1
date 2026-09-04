@@ -214,7 +214,7 @@ try {
         if (Test-Path -LiteralPath $rustfmt -PathType Leaf) {
             Invoke-Checked -Executable $Cargo -Arguments @('fmt', '--all', '--', '--check')
         } else {
-            Write-Warning 'rustfmt is unavailable; formatting check was skipped.'
+            throw "rustfmt for Rust $RequiredRustVersion is required when host tests are enabled. Install the rustfmt component or pass -SkipHostTests only after formatting and tests have passed elsewhere."
         }
         Invoke-Checked -Executable $Cargo -Arguments @(
             'test',

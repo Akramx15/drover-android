@@ -167,10 +167,10 @@ index 1976cbe..da8bd5e 100644
  macro_rules! version_info {
      () => {
 diff --git a/src/general_api.rs b/src/general_api.rs
-index 6377302..38fd4cd 100644
+index 6377302..5b0275b 100644
 --- a/src/general_api.rs
 +++ b/src/general_api.rs
-@@ -22,45 +22,120 @@ pub unsafe extern "C" fn tun2proxy_run_with_cli_args(cli_args: *const c_char, tu
+@@ -22,45 +22,113 @@ pub unsafe extern "C" fn tun2proxy_run_with_cli_args(cli_args: *const c_char, tu
      general_run_for_api(args, tun_mtu, packet_information)
  }
  
@@ -295,14 +295,7 @@ index 6377302..38fd4cd 100644
 -        let ret = general_run_async(args_clone, tun_mtu, packet_information, shutdown_token).await;
 -        // Spawn a std thread to force exit after timeout so it isn't cancelled
 -        // when the tokio runtime is dropped.
-+        let ret = general_run_async_with_ready(
-+            args_clone,
-+            tun_mtu,
-+            packet_information,
-+            shutdown_token,
-+            ready_callback,
-+        )
-+        .await;
++        let ret = general_run_async_with_ready(args_clone, tun_mtu, packet_information, shutdown_token, ready_callback).await;
 +        // Standalone desktop processes use a last-resort exit timer. Android
 +        // embeds this library inside an app process, so exiting the process
 +        // after a normal VPN stop would be incorrect.
@@ -310,7 +303,7 @@ index 6377302..38fd4cd 100644
          let _h = std::thread::spawn(move || {
              // Delay some seconds then try to exit current process if not exited yet, normally this case should not happen
              std::thread::sleep(crate::FORCE_EXIT_TIMEOUT);
-@@ -70,7 +145,6 @@ pub fn general_run_for_api(args: Args, tun_mtu: u16, packet_information: bool) -
+@@ -70,7 +138,6 @@ pub fn general_run_for_api(args: Args, tun_mtu: u16, packet_information: bool) -
          tokio::time::sleep(std::time::Duration::from_micros(100)).await;
          ret
      });
@@ -318,7 +311,7 @@ index 6377302..38fd4cd 100644
      let res = match res {
          Ok(sessions) => {
              log::debug!("tun2proxy exited normally, current session count: {sessions}");
-@@ -82,19 +156,25 @@ pub fn general_run_for_api(args: Args, tun_mtu: u16, packet_information: bool) -
+@@ -82,19 +149,25 @@ pub fn general_run_for_api(args: Args, tun_mtu: u16, packet_information: bool) -
          }
      };
  
@@ -348,7 +341,7 @@ index 6377302..38fd4cd 100644
  ) -> std::io::Result<usize> {
      let mut tun_config = tun::Configuration::default();
  
-@@ -186,7 +266,13 @@ pub async fn general_run_async(
+@@ -186,7 +259,13 @@ pub async fn general_run_async(
          }
      }
  
@@ -363,7 +356,7 @@ index 6377302..38fd4cd 100644
  
      match join_handle.await? {
          Ok(sessions) => {
-@@ -211,3 +297,40 @@ pub async fn general_run_async(
+@@ -211,3 +290,40 @@ pub async fn general_run_async(
  pub unsafe extern "C" fn tun2proxy_stop() -> c_int {
      tun2proxy_stop_internal()
  }
@@ -405,7 +398,7 @@ index 6377302..38fd4cd 100644
 +    }
 +}
 diff --git a/src/lib.rs b/src/lib.rs
-index 2cab17f..c36470c 100644
+index 2cab17f..77e24c5 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -1,11 +1,12 @@
@@ -464,7 +457,7 @@ index 2cab17f..c36470c 100644
  mod socks;
  mod traffic_status;
  #[cfg(feature = "udpgw")]
-@@ -67,6 +71,53 @@ pub mod win_svc;
+@@ -67,6 +71,50 @@ pub mod win_svc;
  
  const DNS_PORT: u16 = 53;
  
@@ -482,10 +475,7 @@ index 2cab17f..c36470c 100644
 +        // Refresh at most every 30 seconds (and four times inside shorter
 +        // expiry windows). The hot datagram path only checks an Instant; it
 +        // does not lock or write the shared map for every packet.
-+        let refresh_interval = std::cmp::max(
-+            Duration::from_millis(1),
-+            std::cmp::min(timeout / 4, Duration::from_secs(30)),
-+        );
++        let refresh_interval = std::cmp::max(Duration::from_millis(1), std::cmp::min(timeout / 4, Duration::from_secs(30)));
 +        Self {
 +            sources: Mutex::new(HashMap::new()),
 +            timeout,
@@ -518,7 +508,7 @@ index 2cab17f..c36470c 100644
  #[allow(unused)]
  #[derive(Hash, Copy, Clone, Eq, PartialEq, Debug)]
  #[cfg_attr(
-@@ -196,13 +247,28 @@ async fn create_udp_stream(socket_queue: &Option<Arc<SocketQueue>>, peer: Socket
+@@ -196,13 +244,28 @@ async fn create_udp_stream(socket_queue: &Option<Arc<SocketQueue>>, peer: Socket
  /// # Returns
  /// * The number of sessions while exiting
  pub async fn run<D>(device: D, mtu: u16, args: Args, shutdown_token: CancellationToken) -> crate::Result<usize>
@@ -547,7 +537,7 @@ index 2cab17f..c36470c 100644
      let key = args.proxy.credentials.clone();
      let dns_addr = args.dns_addr;
      let ipv6_enabled = args.ipv6_enabled;
-@@ -228,14 +294,20 @@ where
+@@ -228,14 +291,20 @@ where
      #[cfg(not(target_os = "linux"))]
      let socket_queue = None;
  
@@ -571,7 +561,7 @@ index 2cab17f..c36470c 100644
      let mut ipstack_config = ipstack::IpStackConfig::default();
      ipstack_config.mtu(mtu)?;
      let mut tcp_cfg = ipstack::TcpConfig::default();
-@@ -270,8 +342,18 @@ where
+@@ -270,8 +339,18 @@ where
      });
  
      let task_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -590,7 +580,7 @@ index 2cab17f..c36470c 100644
      loop {
          let task_count = task_count.clone();
          let virtual_dns = virtual_dns.clone();
-@@ -280,6 +362,12 @@ where
+@@ -280,6 +359,12 @@ where
                  log::info!("Shutdown received");
                  break;
              }
@@ -603,7 +593,7 @@ index 2cab17f..c36470c 100644
              ip_stack_stream = ip_stack.accept() => {
                  ip_stack_stream?
              }
-@@ -307,7 +395,7 @@ where
+@@ -307,7 +392,7 @@ where
                  };
                  let proxy_handler = mgr.new_proxy_handler(info, domain_name, false).await?;
                  let socket_queue = socket_queue.clone();
@@ -612,7 +602,7 @@ index 2cab17f..c36470c 100644
                      if let Err(err) = handle_tcp_session(tcp, proxy_handler, socket_queue).await {
                          log::error!("{info} error \"{err}\"");
                      }
-@@ -327,6 +415,10 @@ where
+@@ -327,6 +412,10 @@ where
                  let count = task_count.fetch_add(1, Relaxed).saturating_add(1);
                  log::trace!("Session count {count}");
                  let mut info = SessionInfo::new(udp.local_addr(), udp.peer_addr(), IpProtocol::Udp);
@@ -623,7 +613,7 @@ index 2cab17f..c36470c 100644
                  if info.dst.port() == DNS_PORT {
                      if is_private_ip(info.dst.ip()) {
                          info.dst.set_ip(dns_addr); // !!! Here we change the destination address to remote DNS server!!!
-@@ -335,7 +427,7 @@ where
+@@ -335,7 +424,7 @@ where
                          info.protocol = IpProtocol::Tcp;
                          let proxy_handler = mgr.new_proxy_handler(info, None, false).await?;
                          let socket_queue = socket_queue.clone();
@@ -632,7 +622,7 @@ index 2cab17f..c36470c 100644
                              if let Err(err) = handle_dns_over_tcp_session(udp, proxy_handler, socket_queue, ipv6_enabled).await {
                                  log::error!("{info} error \"{err}\"");
                              }
-@@ -345,7 +437,7 @@ where
+@@ -345,7 +434,7 @@ where
                          continue;
                      }
                      if args.dns == ArgDns::Virtual {
@@ -641,7 +631,7 @@ index 2cab17f..c36470c 100644
                              if let Some(virtual_dns) = virtual_dns {
                                  if let Err(err) = handle_virtual_dns_session(udp, virtual_dns).await {
                                      log::error!("{info} error \"{err}\"");
-@@ -374,7 +466,7 @@ where
+@@ -374,7 +463,7 @@ where
                      let tcpinfo = SessionInfo::new(tcp_src, udpgw.get_udpgw_server_addr(), IpProtocol::Tcp);
                      let proxy_handler = mgr.new_proxy_handler(tcpinfo, None, false).await?;
                      let queue = socket_queue.clone();
@@ -650,7 +640,7 @@ index 2cab17f..c36470c 100644
                          let dst = info.dst; // real UDP destination address
                          let dst_addr = match domain_name {
                              Some(ref d) => socks5_impl::protocol::Address::from((d.clone(), dst.port())),
-@@ -391,9 +483,20 @@ where
+@@ -391,9 +480,20 @@ where
                  match mgr.new_proxy_handler(info, domain_name, true).await {
                      Ok(proxy_handler) => {
                          let socket_queue = socket_queue.clone();
@@ -673,7 +663,7 @@ index 2cab17f..c36470c 100644
                                  log::info!("Ending {info} with \"{err}\"");
                              }
                              let count = task_count.fetch_sub(1, Relaxed).saturating_sub(1);
-@@ -416,7 +519,11 @@ where
+@@ -416,7 +516,11 @@ where
              }
          }
      }
@@ -686,7 +676,7 @@ index 2cab17f..c36470c 100644
  }
  
  #[cfg(all(test, target_os = "linux"))]
-@@ -456,6 +563,7 @@ async fn handle_virtual_dns_session(mut udp: IpStackUdpStream, dns: Arc<Mutex<Vi
+@@ -456,6 +560,7 @@ async fn handle_virtual_dns_session(mut udp: IpStackUdpStream, dns: Arc<Mutex<Vi
      Ok(())
  }
  
@@ -694,7 +684,7 @@ index 2cab17f..c36470c 100644
  async fn copy_and_record_traffic<R, W>(reader: &mut R, writer: &mut W, is_tx: bool) -> tokio::io::Result<u64>
  where
      R: tokio::io::AsyncRead + Unpin + ?Sized,
-@@ -479,6 +587,15 @@ where
+@@ -479,6 +584,15 @@ where
      Ok(total)
  }
  
@@ -710,7 +700,7 @@ index 2cab17f..c36470c 100644
  async fn handle_tcp_session(
      mut tcp_stack: IpStackTcpStream,
      proxy_handler: Arc<Mutex<dyn ProxyHandler>>,
-@@ -645,16 +762,33 @@ async fn handle_udp_gateway_session(
+@@ -645,16 +759,33 @@ async fn handle_udp_gateway_session(
      Ok(())
  }
  
@@ -746,7 +736,7 @@ index 2cab17f..c36470c 100644
          let handler = proxy_handler.lock().await;
          (
              handler.get_session_info(),
-@@ -681,6 +815,11 @@ async fn handle_udp_associate_session(
+@@ -681,6 +812,11 @@ async fn handle_udp_associate_session(
  
      let mut buf1 = [0_u8; 4096];
      let mut buf2 = [0_u8; 4096];
@@ -758,7 +748,7 @@ index 2cab17f..c36470c 100644
      loop {
          tokio::select! {
              len = udp_stack.read(&mut buf1) => {
-@@ -692,8 +831,20 @@ async fn handle_udp_associate_session(
+@@ -692,8 +828,20 @@ async fn handle_udp_associate_session(
  
                  crate::traffic_status::traffic_status_update(len, 0)?;
  
@@ -780,7 +770,7 @@ index 2cab17f..c36470c 100644
                          Address::DomainAddress(domain_name.clone().into(), session_info.dst.port())
                      } else {
                          session_info.dst.into()
-@@ -706,8 +857,14 @@ async fn handle_udp_associate_session(
+@@ -706,8 +854,14 @@ async fn handle_udp_associate_session(
  
                      udp_server.write_all(&s5_udp_data).await?;
                  } else {
@@ -796,7 +786,7 @@ index 2cab17f..c36470c 100644
              }
              len = udp_server.read(&mut buf2) => {
                  let len = len?;
-@@ -718,6 +875,7 @@ async fn handle_udp_associate_session(
+@@ -718,6 +872,7 @@ async fn handle_udp_associate_session(
  
                  crate::traffic_status::traffic_status_update(0, len)?;
  
@@ -804,7 +794,7 @@ index 2cab17f..c36470c 100644
                  if let ProxyType::Socks4 | ProxyType::Socks5 = proxy_type {
                      // Remove SOCKS5 UDP header from the server data
                      let header = UdpHeader::retrieve_from_stream(&mut &buf2[..])?;
-@@ -725,7 +883,7 @@ async fn handle_udp_associate_session(
+@@ -725,7 +880,7 @@ async fn handle_udp_associate_session(
  
                      let buf = if session_info.dst.port() == DNS_PORT {
                          let mut message = dns::parse_data_to_dns_message(data, false)?;
@@ -813,7 +803,7 @@ index 2cab17f..c36470c 100644
                              dns::remove_ipv6_entries(&mut message);
                          }
                          message.to_vec()?
-@@ -737,6 +895,9 @@ async fn handle_udp_associate_session(
+@@ -737,6 +892,9 @@ async fn handle_udp_associate_session(
                  } else {
                      udp_stack.write_all(buf2).await?;
                  }
@@ -823,7 +813,7 @@ index 2cab17f..c36470c 100644
              }
          }
      }
-@@ -888,3 +1049,133 @@ async fn handle_proxy_session(server: &mut TcpStream, proxy_handler: Arc<Mutex<d
+@@ -888,3 +1046,133 @@ async fn handle_proxy_session(server: &mut TcpStream, proxy_handler: Arc<Mutex<d
      crate::traffic_status::traffic_status_update(tx, rx)?;
      Ok(proxy_handler.get_udp_associate())
  }
@@ -958,14 +948,14 @@ index 2cab17f..c36470c 100644
 +    }
 +}
 diff --git a/src/traffic_status.rs b/src/traffic_status.rs
-index 9f32b7c..bf047f8 100644
+index 9f32b7c..5737aa9 100644
 --- a/src/traffic_status.rs
 +++ b/src/traffic_status.rs
 @@ -1,11 +1,15 @@
 -use crate::error::{Error, Result};
-+use crate::error::Result;
 +#[cfg(feature = "traffic-stats")]
 +use crate::error::Error;
++use crate::error::Result;
  use std::os::raw::c_void;
 +#[cfg(feature = "traffic-stats")]
  use std::sync::{LazyLock, Mutex};
