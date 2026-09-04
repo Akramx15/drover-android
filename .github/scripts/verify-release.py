@@ -118,10 +118,15 @@ def validate_license_bundle(data: bytes, source: str) -> str:
     except UnicodeDecodeError as error:
         raise RuntimeError(f"{source}: bundled license asset is not UTF-8") from error
 
+    # Git may present text with platform-native newlines in an existing working
+    # tree. Marker validation is textual; the exact byte-for-byte comparison
+    # between the checked-in asset and each APK remains enforced separately.
+    normalized_text = text.replace("\r\n", "\n").replace("\r", "\n")
+
     expected_header = f"Package count: {EXPECTED_LICENSE_PACKAGE_COUNT}"
-    if expected_header not in text:
+    if expected_header not in normalized_text:
         raise RuntimeError(f"{source}: missing {expected_header!r}")
-    actual_count = len(re.findall(r"(?m)^Package: ", text))
+    actual_count = len(re.findall(r"(?m)^Package: ", normalized_text))
     if actual_count != EXPECTED_LICENSE_PACKAGE_COUNT:
         raise RuntimeError(
             f"{source}: expected {EXPECTED_LICENSE_PACKAGE_COUNT} license sections, "
@@ -136,9 +141,9 @@ def validate_license_bundle(data: bytes, source: str) -> str:
         "Copyright notices for The Rust Standard Library",
         "Apache License",
     ):
-        if required not in text:
+        if required not in normalized_text:
             raise RuntimeError(f"{source}: bundled license asset is missing {required!r}")
-    if re.search(r"(?m)^Package: socks5-impl\b", text):
+    if re.search(r"(?m)^Package: socks5-impl\b", normalized_text):
         raise RuntimeError(f"{source}: disabled socks5-impl appeared in the bundle")
     return hashlib.sha256(data).hexdigest()
 
