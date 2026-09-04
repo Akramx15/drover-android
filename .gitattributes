@@ -1,10 +1,29 @@
-# Keep release-critical text deterministic across Windows and Linux checkouts.
-app/src/main/assets/third_party_licenses.txt text eol=lf
-native/tun2proxy-drover.patch text eol=lf
-.github/workflows/*.yml text eol=lf
-.github/scripts/*.py text eol=lf
-native/*.ps1 text eol=lf
-native/*.toml text eol=lf
+# Keep text deterministic across Windows and Linux checkouts.
+* text=auto
+.gitattributes text eol=lf
+
 gradlew text eol=lf
 *.bat text eol=crlf
+*.gradle text eol=lf
+*.java text eol=lf
+*.kt text eol=lf
+*.md text eol=lf
+*.properties text eol=lf
+*.rs text eol=lf
+*.xml text eol=lf
+*.lock text eol=lf
+*.patch text eol=lf
+*.patch whitespace=-blank-at-eol
+*.yml text eol=lf
+*.yaml text eol=lf
+*.py text eol=lf
+*.ps1 text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+
+*.jar binary
 *.so binary
+*.apk binary
+*.aab binary
+*.idsig binary
+*.png binary
