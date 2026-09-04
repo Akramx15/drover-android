@@ -58,9 +58,12 @@ function Resolve-ExactToolchainCommand {
     $rustup = Get-Command rustup -ErrorAction SilentlyContinue
     if ($null -ne $rustup) {
         if ($ToolName -eq 'cargo') {
-            Invoke-Checked $rustup.Source toolchain install $RequiredRustVersion --profile minimal --component rustfmt --no-self-update
+            # Consume rustup's success-stream output so this resolver returns
+            # only the executable path. Fresh Linux runners print installation
+            # progress there, which would otherwise turn $Cargo into an array.
+            Invoke-Checked $rustup.Source toolchain install $RequiredRustVersion --profile minimal --component rustfmt --no-self-update | Out-Host
             foreach ($target in $Targets) {
-                Invoke-Checked $rustup.Source target add --toolchain $RequiredRustVersion $target.RustTarget
+                Invoke-Checked $rustup.Source target add --toolchain $RequiredRustVersion $target.RustTarget | Out-Host
             }
         }
         $resolved = (& $rustup.Source which --toolchain $RequiredRustVersion $ToolName).Trim()
