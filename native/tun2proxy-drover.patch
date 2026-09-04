@@ -1,0 +1,491 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 891e8eb..a45aabe 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -23,8 +23,9 @@ path = "src/bin/udpgw_server.rs"
+ required-features = ["udpgw"]
+ 
+ [features]
+-default = ["udpgw"]
+-udpgw = []
++default = []
++proxy = ["dep:socks5-impl"]
++udpgw = ["proxy"]
+ 
+ [dependencies]
+ async-trait = "0.1.92"
+@@ -43,7 +44,7 @@ log = { version = "0.4.33", features = ["std"] }
+ percent-encoding = "2.3.2"
+ serde = { version = "1.0.229", features = ["derive"] }
+ shlex = "2.0.1"
+-socks5-impl = { version = "0.9.6", default-features = false, features = [
++socks5-impl = { version = "0.9.6", optional = true, default-features = false, features = [
+     "tokio",
+     "serde",
+ ] }
+diff --git a/build-android.sh b/build-android.sh
+index a73007b..b28c757 100755
+--- a/build-android.sh
++++ b/build-android.sh
+@@ -104,7 +104,7 @@ function build_android() {
+                 echo "Unknown target $target"
+                 ;;
+         esac
+-        cargo build --target $target $mode
++        cargo build --locked --no-default-features --lib --target $target $mode
+         if [ $? -ne 0 ]; then
+             echo "Failed to build for target $target"
+             exit 1
+diff --git a/build.rs b/build.rs
+index a628cef..4e1885b 100644
+--- a/build.rs
++++ b/build.rs
+@@ -4,8 +4,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+         println!("cargo:rustc-env=GIT_HASH={}", git_hash.trim());
+     }
+ 
+-    // Get the build time
+-    let build_time = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
++    // Honor SOURCE_DATE_EPOCH so release builds are reproducible.
++    println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
++    let build_time = std::env::var("SOURCE_DATE_EPOCH")
++        .ok()
++        .and_then(|value| value.parse::<i64>().ok())
++        .and_then(|seconds| chrono::DateTime::<chrono::Utc>::from_timestamp(seconds, 0))
++        .unwrap_or_else(chrono::Utc::now)
++        .format("%Y-%m-%d %H:%M:%S")
++        .to_string();
+     println!("cargo:rustc-env=BUILD_TIME={build_time}");
+ 
+     #[cfg(target_os = "windows")]
+diff --git a/src/args.rs b/src/args.rs
+index 1976cbe..da8bd5e 100644
+--- a/src/args.rs
++++ b/src/args.rs
+@@ -1,5 +1,6 @@
+ use crate::{Error, Result};
+-use socks5_impl::protocol::UserKey;
++#[cfg(feature = "proxy")]
++pub use socks5_impl::protocol::UserKey;
+ use tproxy_config::IpCidr;
+ 
+ #[cfg(target_os = "linux")]
+@@ -8,6 +9,30 @@ use std::ffi::OsString;
+ use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+ use std::str::FromStr;
+ 
++#[cfg(not(feature = "proxy"))]
++#[derive(Default, Clone, Debug, serde::Serialize, serde::Deserialize)]
++pub struct UserKey {
++    pub username: String,
++    pub password: String,
++}
++
++#[cfg(not(feature = "proxy"))]
++impl UserKey {
++    pub fn new(username: impl Into<String>, password: impl Into<String>) -> Self {
++        Self {
++            username: username.into(),
++            password: password.into(),
++        }
++    }
++}
++
++#[cfg(not(feature = "proxy"))]
++impl std::fmt::Display for UserKey {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        write!(f, "{}:{}", self.username, self.password)
++    }
++}
++
+ #[macro_export]
+ macro_rules! version_info {
+     () => {
+diff --git a/src/general_api.rs b/src/general_api.rs
+index 6377302..2b285b2 100644
+--- a/src/general_api.rs
++++ b/src/general_api.rs
+@@ -59,8 +59,10 @@ pub fn general_run_for_api(args: Args, tun_mtu: u16, packet_information: bool) -
+     let args_clone = args.clone();
+     let res = rt.block_on(async move {
+         let ret = general_run_async(args_clone, tun_mtu, packet_information, shutdown_token).await;
+-        // Spawn a std thread to force exit after timeout so it isn't cancelled
+-        // when the tokio runtime is dropped.
++        // Standalone desktop processes use a last-resort exit timer. Android
++        // embeds this library inside an app process, so exiting the process
++        // after a normal VPN stop would be incorrect.
++        #[cfg(not(target_os = "android"))]
+         let _h = std::thread::spawn(move || {
+             // Delay some seconds then try to exit current process if not exited yet, normally this case should not happen
+             std::thread::sleep(crate::FORCE_EXIT_TIMEOUT);
+diff --git a/src/lib.rs b/src/lib.rs
+index 2cab17f..89c5910 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,11 +1,12 @@
+ #[cfg(target_os = "linux")]
+ extern crate bincode_next as bincode;
+ 
++#[cfg(feature = "proxy")]
++use crate::http::HttpManager;
+ #[cfg(feature = "udpgw")]
+ use crate::udpgw::UdpGwClient;
+ use crate::{
+     directions::{IncomingDataEvent, IncomingDirection, OutgoingDirection},
+-    http::HttpManager,
+     no_proxy::NoProxyManager,
+     session_info::{IpProtocol, SessionInfo},
+     virtual_dns::VirtualDns,
+@@ -13,15 +14,16 @@ use crate::{
+ pub use clap::ValueEnum;
+ use ipstack::{IpStackStream, IpStackTcpStream, IpStackUdpStream};
+ use proxy_handler::{ProxyHandler, ProxyHandlerManager};
++#[cfg(feature = "proxy")]
+ use socks::SocksProxyManager;
+-pub use socks5_impl::protocol::UserKey;
+ #[cfg(feature = "udpgw")]
+ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
+ use std::{
+-    collections::VecDeque,
++    collections::{HashMap, VecDeque},
+     io::ErrorKind,
+     net::{IpAddr, SocketAddr},
+     sync::Arc,
++    time::{Duration, Instant},
+ };
+ use tokio::{
+     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+@@ -36,7 +38,7 @@ use udp_stream::UdpStream;
+ use udpgw::{UDPGW_KEEPALIVE_TIME, UDPGW_MAX_CONNECTIONS, UdpGwClientStream, UdpGwResponse};
+ 
+ pub use {
+-    args::{ArgDns, ArgProxy, ArgVerbosity, Args, ProxyType},
++    args::{ArgDns, ArgProxy, ArgVerbosity, Args, ProxyType, UserKey},
+     error::{BoxError, Error, Result},
+     traffic_status::{TrafficStatus, tun2proxy_set_traffic_status_callback},
+ };
+@@ -52,11 +54,13 @@ mod dns;
+ mod dump_logger;
+ mod error;
+ mod general_api;
++#[cfg(feature = "proxy")]
+ mod http;
+ mod no_proxy;
+ mod proxy_handler;
+ mod session_info;
+ pub mod socket_transfer;
++#[cfg(feature = "proxy")]
+ mod socks;
+ mod traffic_status;
+ #[cfg(feature = "udpgw")]
+@@ -67,6 +71,34 @@ pub mod win_svc;
+ 
+ const DNS_PORT: u16 = 53;
+ 
++/// Tracks the first send made by a virtual UDP source socket. `ipstack`
++/// creates one session per destination, while discord-drover tracks the
++/// underlying Discord socket, which may contact several destinations.
++struct DroverUdpTracker {
++    sources: Mutex<HashMap<SocketAddr, Instant>>,
++    timeout: Duration,
++}
++
++impl DroverUdpTracker {
++    fn new(timeout: Duration) -> Self {
++        Self {
++            sources: Mutex::new(HashMap::new()),
++            timeout,
++        }
++    }
++
++    async fn claim(&self, source: SocketAddr) -> bool {
++        let now = Instant::now();
++        let mut sources = self.sources.lock().await;
++        sources.retain(|_, last_seen| now.duration_since(*last_seen) <= self.timeout);
++        sources.insert(source, now).is_none()
++    }
++
++    async fn touch(&self, source: SocketAddr) {
++        self.sources.lock().await.insert(source, Instant::now());
++    }
++}
++
+ #[allow(unused)]
+ #[derive(Hash, Copy, Clone, Eq, PartialEq, Debug)]
+ #[cfg_attr(
+@@ -202,7 +234,9 @@ where
+     log::info!("{} {} starting...", env!("CARGO_PKG_NAME"), version_info!());
+     log::info!("Proxy {} server: {}", args.proxy.proxy_type, args.proxy.addr);
+ 
++    #[cfg(feature = "proxy")]
+     let server_addr = args.proxy.addr;
++    #[cfg(feature = "proxy")]
+     let key = args.proxy.credentials.clone();
+     let dns_addr = args.dns_addr;
+     let ipv6_enabled = args.ipv6_enabled;
+@@ -228,14 +262,20 @@ where
+     #[cfg(not(target_os = "linux"))]
+     let socket_queue = None;
+ 
+-    use socks5_impl::protocol::Version::{V4, V5};
++    #[cfg(feature = "proxy")]
+     let mgr: Arc<dyn ProxyHandlerManager> = match args.proxy.proxy_type {
+-        ProxyType::Socks5 => Arc::new(SocksProxyManager::new(server_addr, V5, key)),
+-        ProxyType::Socks4 => Arc::new(SocksProxyManager::new(server_addr, V4, key)),
++        ProxyType::Socks5 => Arc::new(SocksProxyManager::new(server_addr, socks5_impl::protocol::Version::V5, key)),
++        ProxyType::Socks4 => Arc::new(SocksProxyManager::new(server_addr, socks5_impl::protocol::Version::V4, key)),
+         ProxyType::Http => Arc::new(HttpManager::new(server_addr, key)),
+         ProxyType::None => Arc::new(NoProxyManager::new()),
+     };
+ 
++    #[cfg(not(feature = "proxy"))]
++    let mgr: Arc<dyn ProxyHandlerManager> = match args.proxy.proxy_type {
++        ProxyType::None => Arc::new(NoProxyManager::new()),
++        _ => return Err("This build supports direct forwarding only".into()),
++    };
++
+     let mut ipstack_config = ipstack::IpStackConfig::default();
+     ipstack_config.mtu(mtu)?;
+     let mut tcp_cfg = ipstack::TcpConfig::default();
+@@ -270,6 +310,11 @@ where
+     });
+ 
+     let task_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
++    // A TUN interface exposes source endpoints rather than the app's real
++    // socket handles. Keep an active source claimed for two ipstack timeout
++    // windows so destination-specific sessions still behave like one socket.
++    let drover_udp_timeout = Duration::from_secs(args.udp_timeout.saturating_mul(2).max(30));
++    let drover_udp_tracker = Arc::new(DroverUdpTracker::new(drover_udp_timeout));
+     use std::sync::atomic::Ordering::Relaxed;
+ 
+     loop {
+@@ -327,6 +372,10 @@ where
+                 let count = task_count.fetch_add(1, Relaxed).saturating_add(1);
+                 log::trace!("Session count {count}");
+                 let mut info = SessionInfo::new(udp.local_addr(), udp.peer_addr(), IpProtocol::Udp);
++                // Claim in packet-accept order, before spawned handlers can
++                // race. ipstack creates a session per destination even when
++                // Discord uses one source socket for all of them.
++                let drover_first_send_for_source = drover_udp_tracker.claim(info.src).await;
+                 if info.dst.port() == DNS_PORT {
+                     if is_private_ip(info.dst.ip()) {
+                         info.dst.set_ip(dns_addr); // !!! Here we change the destination address to remote DNS server!!!
+@@ -391,9 +440,20 @@ where
+                 match mgr.new_proxy_handler(info, domain_name, true).await {
+                     Ok(proxy_handler) => {
+                         let socket_queue = socket_queue.clone();
++                        let drover_udp_tracker = drover_udp_tracker.clone();
+                         tokio::spawn(async move {
+                             let ty = args.proxy.proxy_type;
+-                            if let Err(err) = handle_udp_associate_session(udp, ty, proxy_handler, socket_queue, ipv6_enabled).await {
++                            if let Err(err) = handle_udp_associate_session(
++                                udp,
++                                ty,
++                                proxy_handler,
++                                socket_queue,
++                                ipv6_enabled,
++                                drover_first_send_for_source,
++                                drover_udp_tracker,
++                            )
++                            .await
++                            {
+                                 log::info!("Ending {info} with \"{err}\"");
+                             }
+                             let count = task_count.fetch_sub(1, Relaxed).saturating_sub(1);
+@@ -645,16 +705,33 @@ async fn handle_udp_gateway_session(
+     Ok(())
+ }
+ 
++async fn write_direct_udp_packet<W>(udp_server: &mut W, payload: &[u8], apply_drover_preamble: bool) -> std::io::Result<()>
++where
++    W: AsyncWrite + Unpin,
++{
++    if apply_drover_preamble {
++        // The compatibility packets are best-effort. A failed preamble must
++        // never prevent Discord's real packet from being attempted.
++        let _ = udp_server.write_all(&[0]).await;
++        let _ = udp_server.write_all(&[1]).await;
++        tokio::time::sleep(Duration::from_millis(50)).await;
++    }
++    udp_server.write_all(payload).await
++}
++
+ async fn handle_udp_associate_session(
+     mut udp_stack: IpStackUdpStream,
+     proxy_type: ProxyType,
+     proxy_handler: Arc<Mutex<dyn ProxyHandler>>,
+     socket_queue: Option<Arc<SocketQueue>>,
+-    ipv6_enabled: bool,
++    _ipv6_enabled: bool,
++    mut drover_first_send_for_source: bool,
++    drover_udp_tracker: Arc<DroverUdpTracker>,
+ ) -> crate::Result<()> {
++    #[cfg(feature = "proxy")]
+     use socks5_impl::protocol::{Address, StreamOperation, UdpHeader};
+ 
+-    let (session_info, server_addr, domain_name, udp_addr) = {
++    let (session_info, server_addr, _domain_name, udp_addr) = {
+         let handler = proxy_handler.lock().await;
+         (
+             handler.get_session_info(),
+@@ -681,6 +758,10 @@ async fn handle_udp_associate_session(
+ 
+     let mut buf1 = [0_u8; 4096];
+     let mut buf2 = [0_u8; 4096];
++    // Discord starts a voice UDP flow with a 74-byte IP discovery packet.
++    // discord-drover sends two one-byte datagrams before that first packet;
++    // reproducing the same sequence here lets the Android VPN companion apply
++    // the workaround without modifying the Discord APK.
+     loop {
+         tokio::select! {
+             len = udp_stack.read(&mut buf1) => {
+@@ -692,8 +773,18 @@ async fn handle_udp_associate_session(
+ 
+                 crate::traffic_status::traffic_status_update(len, 0)?;
+ 
++                let is_first_send = std::mem::take(&mut drover_first_send_for_source);
++                // Refresh the source before any network write or delay. This
++                // approximates Winsock socket lifetime using what a TUN can see.
++                drover_udp_tracker.touch(session_info.src).await;
++                let apply_drover_preamble = !matches!(proxy_type, ProxyType::Socks4 | ProxyType::Socks5)
++                    && session_info.dst.port() != DNS_PORT
++                    && is_first_send
++                    && buf1.len() == 74;
++
++                #[cfg(feature = "proxy")]
+                 if let ProxyType::Socks4 | ProxyType::Socks5 = proxy_type {
+-                    let s5addr = if let Some(domain_name) = &domain_name {
++                    let s5addr = if let Some(domain_name) = &_domain_name {
+                         Address::DomainAddress(domain_name.clone().into(), session_info.dst.port())
+                     } else {
+                         session_info.dst.into()
+@@ -706,8 +797,14 @@ async fn handle_udp_associate_session(
+ 
+                     udp_server.write_all(&s5_udp_data).await?;
+                 } else {
+-                    udp_server.write_all(buf1).await?;
++                    if apply_drover_preamble {
++                        log::info!("Applying Discord Drover UDP preamble to {session_info}");
++                    }
++                    write_direct_udp_packet(&mut udp_server, buf1, apply_drover_preamble).await?;
+                 }
++
++                #[cfg(not(feature = "proxy"))]
++                write_direct_udp_packet(&mut udp_server, buf1, apply_drover_preamble).await?;
+             }
+             len = udp_server.read(&mut buf2) => {
+                 let len = len?;
+@@ -718,6 +815,7 @@ async fn handle_udp_associate_session(
+ 
+                 crate::traffic_status::traffic_status_update(0, len)?;
+ 
++                #[cfg(feature = "proxy")]
+                 if let ProxyType::Socks4 | ProxyType::Socks5 = proxy_type {
+                     // Remove SOCKS5 UDP header from the server data
+                     let header = UdpHeader::retrieve_from_stream(&mut &buf2[..])?;
+@@ -725,7 +823,7 @@ async fn handle_udp_associate_session(
+ 
+                     let buf = if session_info.dst.port() == DNS_PORT {
+                         let mut message = dns::parse_data_to_dns_message(data, false)?;
+-                        if !ipv6_enabled {
++                        if !_ipv6_enabled {
+                             dns::remove_ipv6_entries(&mut message);
+                         }
+                         message.to_vec()?
+@@ -737,6 +835,9 @@ async fn handle_udp_associate_session(
+                 } else {
+                     udp_stack.write_all(buf2).await?;
+                 }
++
++                #[cfg(not(feature = "proxy"))]
++                udp_stack.write_all(buf2).await?;
+             }
+         }
+     }
+@@ -888,3 +989,86 @@ async fn handle_proxy_session(server: &mut TcpStream, proxy_handler: Arc<Mutex<d
+     crate::traffic_status::traffic_status_update(tx, rx)?;
+     Ok(proxy_handler.get_udp_associate())
+ }
++
++#[cfg(test)]
++mod drover_tests {
++    use super::*;
++    use std::{
++        io,
++        pin::Pin,
++        task::{Context, Poll},
++    };
++
++    #[derive(Default)]
++    struct RecordingWriter {
++        attempts: Vec<Vec<u8>>,
++        fail_calls: Vec<usize>,
++    }
++
++    impl AsyncWrite for RecordingWriter {
++        fn poll_write(mut self: Pin<&mut Self>, _cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
++            let call = self.attempts.len();
++            self.attempts.push(buf.to_vec());
++            if self.fail_calls.contains(&call) {
++                Poll::Ready(Err(io::Error::other("injected failure")))
++            } else {
++                Poll::Ready(Ok(buf.len()))
++            }
++        }
++
++        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++            Poll::Ready(Ok(()))
++        }
++
++        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
++            Poll::Ready(Ok(()))
++        }
++    }
++
++    #[tokio::test]
++    async fn drover_writes_two_datagrams_then_original_after_delay() {
++        let payload = [0xa5; 74];
++        let mut writer = RecordingWriter::default();
++        let started = Instant::now();
++
++        write_direct_udp_packet(&mut writer, &payload, true).await.unwrap();
++
++        assert!(started.elapsed() >= Duration::from_millis(45));
++        assert_eq!(writer.attempts, vec![vec![0], vec![1], payload.to_vec()]);
++    }
++
++    #[tokio::test]
++    async fn drover_does_not_modify_nonmatching_send() {
++        let payload = [0x5a; 73];
++        let mut writer = RecordingWriter::default();
++
++        write_direct_udp_packet(&mut writer, &payload, false).await.unwrap();
++
++        assert_eq!(writer.attempts, vec![payload.to_vec()]);
++    }
++
++    #[tokio::test]
++    async fn drover_still_attempts_original_when_preamble_fails() {
++        let payload = [0xc3; 74];
++        let mut writer = RecordingWriter {
++            fail_calls: vec![0, 1],
++            ..RecordingWriter::default()
++        };
++
++        write_direct_udp_packet(&mut writer, &payload, true).await.unwrap();
++
++        assert_eq!(writer.attempts, vec![vec![0], vec![1], payload.to_vec()]);
++    }
++
++    #[tokio::test]
++    async fn udp_source_is_claimed_once_until_idle_timeout() {
++        let source: SocketAddr = "10.77.0.1:40000".parse().unwrap();
++        let tracker = DroverUdpTracker::new(Duration::from_millis(20));
++
++        assert!(tracker.claim(source).await);
++        assert!(!tracker.claim(source).await);
++        tracker.touch(source).await;
++        tokio::time::sleep(Duration::from_millis(25)).await;
++        assert!(tracker.claim(source).await);
++    }
++}

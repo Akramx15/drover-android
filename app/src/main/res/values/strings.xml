@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Drover Quest</string>
+    <string name="title">Drover Quest</string>
+    <string name="subtitle">معالجة اتصال Discord الصوتي محليًا على Meta Quest 3</string>
+    <string name="privacy_note">يعمل على النظارة فقط. لا يوجد خادم، ولا حساب، ولا جمع للبيانات.</string>
+    <string name="discord_found">Discord الرسمي موجود: %1$s</string>
+    <string name="discord_missing">لم يتم العثور على Discord الرسمي (com.discord).</string>
+    <string name="status_stopped">متوقف</string>
+    <string name="status_starting">جارٍ التشغيل…</string>
+    <string name="status_running">يعمل الآن — افتح Discord وجرّب القناة الصوتية</string>
+    <string name="status_stopping">جارٍ الإيقاف…</string>
+    <string name="status_error">خطأ: %1$s</string>
+    <string name="start">تشغيل Drover</string>
+    <string name="stop">إيقاف</string>
+    <string name="how_it_works">يلتقط التطبيق اتصال Discord فقط عبر VPN محلي، ويمرر TCP وUDP مباشرةً. عند أول حزمة لاكتشاف عنوان الصوت يرسل تسلسل Drover ثم يكمل الاتصال.</string>
+    <string name="vpn_permission_denied">لم تُمنح صلاحية VPN.</string>
+    <string name="notification_channel">Drover Quest</string>
+    <string name="notification_title">Drover يعمل لـDiscord</string>
+    <string name="notification_text">اتصال Discord يمر عبر المعالجة المحلية.</string>
+    <string name="stop_action">إيقاف</string>
+</resources>

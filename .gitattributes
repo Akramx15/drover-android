@@ -1,0 +1,19 @@
+* text=auto
+gradlew text eol=lf
+*.bat text eol=crlf
+*.gradle text eol=lf
+*.java text eol=lf
+*.kt text eol=lf
+*.md text eol=lf
+*.properties text eol=lf
+*.rs text eol=lf
+*.xml text eol=lf
+*.lock text eol=lf
+*.patch text eol=lf
+*.patch whitespace=-blank-at-eol
+*.jar binary
+*.so binary
+*.apk binary
+*.aab binary
+*.idsig binary
+*.png binary
