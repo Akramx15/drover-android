@@ -64,7 +64,8 @@ commit `fc77ca3182b3a63b84266bb0a5d24c096e022765` مع patch قابل لإعاد
 ## أصحاب المشروع والمساهمون
 
 1. [Akramx15](https://github.com/Akramx15) — صاحب المشروع والفكرة والتوجيه.
-2. OpenAI Codex — المساعدة في التصميم والتنفيذ والمراجعة التقنية.
+2. [AhmadotEng](https://github.com/AhmadotEng) — مساهم في تطوير المشروع.
+3. OpenAI Codex — المساعدة في التصميم والتنفيذ والمراجعة التقنية.
 
 المشروع مرخص بـMIT. راجع `LICENSE` و`THIRD_PARTY_NOTICES.md` و
 `DEPENDENCY_LICENSES.md`.
