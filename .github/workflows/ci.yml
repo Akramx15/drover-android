@@ -1,0 +1,111 @@
+name: Android CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ANDROID_NDK_VERSION: 26.1.10909125
+  TUN2PROXY_COMMIT: fc77ca3182b3a63b84266bb0a5d24c096e022765
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;${ANDROID_NDK_VERSION}"
+          echo "ANDROID_NDK_ROOT=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Check out pinned tun2proxy source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init "$RUNNER_TEMP/tun2proxy"
+          git -C "$RUNNER_TEMP/tun2proxy" remote add origin \
+            https://github.com/tun2proxy/tun2proxy.git
+          git -C "$RUNNER_TEMP/tun2proxy" fetch --depth=1 origin "$TUN2PROXY_COMMIT"
+          git -C "$RUNNER_TEMP/tun2proxy" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/tun2proxy" rev-parse HEAD)" = "$TUN2PROXY_COMMIT"
+
+      - name: Build native libraries
+        shell: pwsh
+        run: >-
+          ./native/build-android.ps1
+          -SourceDir "$env:RUNNER_TEMP/tun2proxy"
+          -NdkRoot "$env:ANDROID_NDK_ROOT"
+
+      - name: Verify bundled third-party licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+          CARGO_EXACT="$(rustup which --toolchain 1.97.1 cargo)"
+          RUSTC_EXACT="$(rustup which --toolchain 1.97.1 rustc)"
+          python .github/scripts/generate-third-party-licenses.py \
+            --inventory DEPENDENCY_LICENSES.md \
+            --tun2proxy-manifest "$RUNNER_TEMP/tun2proxy/Cargo.toml" \
+            --project-license LICENSE \
+            --cargo "$CARGO_EXACT" \
+            --rustc "$RUSTC_EXACT" \
+            --output app/src/main/assets/third_party_licenses.txt \
+            --check
+          python -m py_compile \
+            .github/scripts/generate-third-party-licenses.py \
+            .github/scripts/verify-release.py
+
+      - name: Check native ABI inputs
+        shell: python
+        run: |
+          from pathlib import Path
+
+          root = Path("app/src/main/jniLibs")
+          expected = {
+              Path("arm64-v8a/libtun2proxy.so"),
+              Path("armeabi-v7a/libtun2proxy.so"),
+              Path("x86_64/libtun2proxy.so"),
+          }
+          actual = {path.relative_to(root) for path in root.glob("*/*.so")}
+          if actual != expected:
+              raise SystemExit(f"Expected {sorted(map(str, expected))}, found {sorted(map(str, actual))}")
+
+      - name: Lint, test, and assemble both debug distributions
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew --no-daemon \
+            lintUniversalDebug \
+            lintArm64Debug \
+            testUniversalDebugUnitTest \
+            testArm64DebugUnitTest \
+            assembleUniversalDebug \
+            assembleArm64Debug

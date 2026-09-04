@@ -1,0 +1,256 @@
+name: Publish Android pre-release
+
+on:
+  push:
+    tags:
+      - v0.2.0
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to publish
+        required: true
+        default: v0.2.0
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-v0.2.0
+  cancel-in-progress: false
+
+env:
+  ANDROID_NDK_VERSION: 26.1.10909125
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+  TUN2PROXY_COMMIT: fc77ca3182b3a63b84266bb0a5d24c096e022765
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RELEASE_TAG" = "v0.2.0"
+          git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}" >/dev/null
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;${ANDROID_NDK_VERSION}"
+          echo "ANDROID_NDK_ROOT=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Check out pinned tun2proxy source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init "$RUNNER_TEMP/tun2proxy"
+          git -C "$RUNNER_TEMP/tun2proxy" remote add origin \
+            https://github.com/tun2proxy/tun2proxy.git
+          git -C "$RUNNER_TEMP/tun2proxy" fetch --depth=1 origin "$TUN2PROXY_COMMIT"
+          git -C "$RUNNER_TEMP/tun2proxy" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/tun2proxy" rev-parse HEAD)" = "$TUN2PROXY_COMMIT"
+
+      - name: Build native libraries
+        shell: pwsh
+        run: >-
+          ./native/build-android.ps1
+          -SourceDir "$env:RUNNER_TEMP/tun2proxy"
+          -NdkRoot "$env:ANDROID_NDK_ROOT"
+
+      - name: Verify bundled third-party licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+          CARGO_EXACT="$(rustup which --toolchain 1.97.1 cargo)"
+          RUSTC_EXACT="$(rustup which --toolchain 1.97.1 rustc)"
+          python .github/scripts/generate-third-party-licenses.py \
+            --inventory DEPENDENCY_LICENSES.md \
+            --tun2proxy-manifest "$RUNNER_TEMP/tun2proxy/Cargo.toml" \
+            --project-license LICENSE \
+            --cargo "$CARGO_EXACT" \
+            --rustc "$RUSTC_EXACT" \
+            --output app/src/main/assets/third_party_licenses.txt \
+            --check
+          python -m py_compile \
+            .github/scripts/generate-third-party-licenses.py \
+            .github/scripts/verify-release.py
+
+      - name: Decode and validate release keystore
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for variable in \
+            ANDROID_KEYSTORE_BASE64 \
+            ANDROID_KEYSTORE_PASSWORD \
+            ANDROID_KEY_ALIAS \
+            ANDROID_KEY_PASSWORD
+          do
+            test -n "${!variable:-}" || {
+              echo "Required release-signing secret is missing: ${variable}" >&2
+              exit 1
+            }
+          done
+          python - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          destination = Path(os.environ["RUNNER_TEMP"]) / "drover-release.jks"
+          destination.write_bytes(
+              base64.b64decode(os.environ["ANDROID_KEYSTORE_BASE64"], validate=True)
+          )
+          if destination.stat().st_size == 0:
+              raise SystemExit("Decoded keystore is empty")
+          PY
+          chmod 600 "${RUNNER_TEMP}/drover-release.jks"
+          echo "ANDROID_KEYSTORE_FILE=${RUNNER_TEMP}/drover-release.jks" >> "$GITHUB_ENV"
+          keytool -list \
+            -keystore "${RUNNER_TEMP}/drover-release.jks" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            -alias "$ANDROID_KEY_ALIAS" >/dev/null
+
+      - name: Build signed release APKs
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew --no-daemon \
+            lintUniversalRelease \
+            lintArm64Release \
+            testUniversalReleaseUnitTest \
+            testArm64ReleaseUnitTest \
+            assembleUniversalRelease \
+            assembleArm64Release
+
+      - name: Remove decoded keystore after signing
+        if: always()
+        shell: bash
+        run: rm -f "${RUNNER_TEMP}/drover-release.jks"
+
+      - name: Stage the two public assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp app/build/outputs/apk/universal/release/app-universal-release.apk \
+            dist/Drover-for-Android-v0.2.0-universal.apk
+          cp app/build/outputs/apk/arm64/release/app-arm64-release.apk \
+            dist/Drover-for-Android-v0.2.0-arm64-v8a.apk
+          test "$(find dist -maxdepth 1 -type f -name '*.apk' | wc -l)" -eq 2
+
+      - name: Verify signatures, package, ABIs, and 16 KiB alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="${ANDROID_SDK_ROOT}/build-tools/36.0.0"
+          LLVM_READELF="${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          python .github/scripts/verify-release.py \
+            --universal dist/Drover-for-Android-v0.2.0-universal.apk \
+            --arm64 dist/Drover-for-Android-v0.2.0-arm64-v8a.apk \
+            --apksigner "${BUILD_TOOLS}/apksigner" \
+            --aapt2 "${BUILD_TOOLS}/aapt2" \
+            --zipalign "${BUILD_TOOLS}/zipalign" \
+            --readelf "$LLVM_READELF" \
+            --expected-cert-sha256 "$(tr -d '[:space:]' < .github/release-certificate-sha256.txt)" \
+            --license-asset app/src/main/assets/third_party_licenses.txt \
+            --metadata-out dist/verification.env
+
+      - name: Store native debug symbols outside the public release
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Drover-for-Android-v0.2.0-native-debug-symbols
+          path: app/build/native-symbols/**/*.dbg
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 9
+
+      - name: Generate release notes with checksums
+        shell: python
+        run: |
+          from pathlib import Path
+
+          metadata = {}
+          for line in Path("dist/verification.env").read_text(encoding="utf-8").splitlines():
+              if line:
+                  key, value = line.split("=", 1)
+                  metadata[key] = value
+
+          notes = Path(".github/release-notes-v0.2.0.md").read_text(encoding="utf-8")
+          for key, value in metadata.items():
+              notes = notes.replace(f"@{key}@", value)
+          if "@" in notes:
+              raise SystemExit("Unresolved release-note placeholder")
+          Path("dist/release-notes.md").write_text(notes, encoding="utf-8")
+
+      - name: Publish exactly two APK assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            mapfile -t existing_assets < <(
+              gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name'
+            )
+            for asset in "${existing_assets[@]}"; do
+              gh release delete-asset "$RELEASE_TAG" "$asset" --yes
+            done
+            gh release edit "$RELEASE_TAG" \
+              --title "Drover for Android v0.2.0" \
+              --notes-file dist/release-notes.md \
+              --prerelease
+          else
+            gh release create "$RELEASE_TAG" \
+              --verify-tag \
+              --title "Drover for Android v0.2.0" \
+              --notes-file dist/release-notes.md \
+              --prerelease
+          fi
+          gh release upload "$RELEASE_TAG" \
+            dist/Drover-for-Android-v0.2.0-universal.apk \
+            dist/Drover-for-Android-v0.2.0-arm64-v8a.apk
+          mapfile -t published_assets < <(
+            gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | sort
+          )
+          test "${#published_assets[@]}" -eq 2
+          test "${published_assets[0]}" = "Drover-for-Android-v0.2.0-arm64-v8a.apk"
+          test "${published_assets[1]}" = "Drover-for-Android-v0.2.0-universal.apk"
+
+      - name: Remove decoded keystore
+        if: always()
+        shell: bash
+        run: rm -f "${RUNNER_TEMP}/drover-release.jks"

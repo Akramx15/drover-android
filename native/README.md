@@ -1,68 +1,134 @@
 # Native engine
 
-The bundled `libtun2proxy.so` is built from:
+Drover for Android bundles a Direct-only build of `tun2proxy` for three Android
+ABIs. The build is pinned to the following inputs:
 
-- Repository: https://github.com/tun2proxy/tun2proxy
+- Repository: <https://github.com/tun2proxy/tun2proxy>
 - Commit: `fc77ca3182b3a63b84266bb0a5d24c096e022765`
 - Crate version: `0.8.3`
-- Target: `aarch64-linux-android`
+- `ipstack` TCP-drop fix: `0f95edc89f23c6700e858eeb5120dd7f6dd1a1c7`
+  from <https://github.com/narrowlink/ipstack>
+- Rust: `1.97.1` (see `rust-toolchain.toml`)
 - Android NDK: `26.1.10909125`
+- Android API: `29`
+- Targets: `aarch64-linux-android`, `armv7-linux-androideabi`, and
+  `x86_64-linux-android`
 
-Apply `tun2proxy-drover.patch` to that commit and use the included
-`Cargo.lock`, then run Cargo for the `aarch64-linux-android` release target.
-Copy the resulting `libtun2proxy.so` to
-`app/src/main/jniLibs/arm64-v8a/`.
+`tun2proxy-drover.patch` contains the complete source delta. `Cargo.lock` pins
+the dependency graph. The release build always uses `--frozen` and
+`--no-default-features`; the latter excludes the SOCKS/HTTP proxy stack and its
+`socks5-impl` dependency.
 
-The patch has four focused changes:
+## Drover patch
 
-1. It tracks the first datagram observed for each Discord UDP source endpoint
-   and sends the Drover `00`, `01`, 50 ms sequence when that datagram is 74
-   bytes and direct forwarding is selected. A source endpoint is kept alive
-   for twice tun2proxy's UDP idle timeout; this is the closest socket identity
-   available through an Android TUN interface.
-2. It disables a standalone-process emergency-exit timer on Android, where
-   the library is embedded in the app process.
-3. It makes the SOCKS/HTTP proxy stack optional and keeps the Quest build in
-   direct-only mode, so the bundled binary excludes `socks5-impl`.
-4. It honors `SOURCE_DATE_EPOCH` and supports reproducible release metadata.
+The patch intentionally stays narrow:
 
-## Rebuild on Windows
+1. It sends Drover's `00`, `01`, 50 ms compatibility sequence before the first
+   matching 74-byte Discord UDP discovery packet for a virtual source socket.
+2. It tracks that source across destination-specific `ipstack` sessions. Its
+   last-seen timestamp is refreshed at most once every 30 seconds per session,
+   instead of locking and writing the shared map for every datagram.
+3. It preserves the configured network lifetimes. The Android app passes a
+   120-second UDP timeout; the unchanged tun2proxy TCP default is 600 seconds.
+4. It fixes the Android Tokio runtime at two asynchronous worker threads. The
+   default runtime would otherwise scale its pool with the device CPU count.
+   A one-worker candidate was measured but not accepted because full traffic
+   stability was not demonstrated; two is the conservative minimum for this
+   pre-release. The blocking pool is capped at one on-demand thread with a
+   one-second idle lifetime rather than Tokio's large default cap.
+5. It compiles traffic counters and their locks out of the Direct-only mobile
+   build. The C callback symbol remains as a compatibility no-op. Enabling the
+   `traffic-stats` feature restores the original counters.
+6. It reports readiness through the stable JNI bridge only after the TUN,
+   `ipstack`, trackers, and session task set are initialized. The app therefore
+   never reports `RUNNING` or opens Discord before the packet loop is ready.
+7. It owns TCP and UDP session tasks in a Tokio `JoinSet`. Completed task
+   records are reaped as `select` events while the tunnel runs; the empty set
+   is guarded, so this adds no background polling or busy loop. Shutdown still
+   aborts and joins outstanding tasks while the runtime is alive, then drops
+   `ipstack`.
+   The pinned upstream `ipstack` fix replaces its two blocking TCP-drop waits
+   with a non-blocking signal and task abort, preventing temporary replacement
+   workers and shutdown deadlocks. A generation-owned RAII registry keeps the
+   old cancellation token registered through complete runtime teardown; an
+   already-cancelled replacement waits on a condition variable, so packet
+   loops cannot overlap and an old cleanup cannot erase a new token. Android
+   does not use tun2proxy's standalone-process emergency-exit timer.
+8. It honors `SOURCE_DATE_EPOCH` and remapped source paths for reproducible
+   release metadata.
 
-Requirements: Rust stable, Android target `aarch64-linux-android`, and Android
-NDK 26.1.10909125. From a sibling checkout of tun2proxy:
+## Rebuild all Android ABIs
+
+The PowerShell script works under `pwsh` on Windows x64 and Linux x64. It
+expects NDK `26.1.10909125` to be installed. When `rustup` is available it
+installs the pinned Rust toolchain, `rustfmt`, and all three Android targets;
+otherwise those exact components must already exist.
+
+Start from a clean detached checkout of the pinned upstream commit:
 
 ```powershell
-git checkout fc77ca3182b3a63b84266bb0a5d24c096e022765
-git apply ..\drover-quest\native\tun2proxy-drover.patch
-Copy-Item ..\drover-quest\native\Cargo.lock .\Cargo.lock -Force
-rustup target add aarch64-linux-android
+$ScratchRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'drover-native-build'
+$Tun2ProxyRoot = Join-Path $ScratchRoot 'tun2proxy'
+git clone https://github.com/tun2proxy/tun2proxy.git $Tun2ProxyRoot
+git -C $Tun2ProxyRoot checkout --detach fc77ca3182b3a63b84266bb0a5d24c096e022765
 
-$TaskNdk = "$env:LOCALAPPDATA\Android\Sdk\ndk\26.1.10909125"
-$env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = "$TaskNdk\toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android29-clang.cmd"
-$env:CC_aarch64_linux_android = $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER
-$env:AR_aarch64_linux_android = "$TaskNdk\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-ar.exe"
-$NativeRoot = (Get-Location).Path
-$TargetRoot = "$NativeRoot\target-android"
-$TaskUserRoot = [Environment]::GetFolderPath("UserProfile")
-$env:SOURCE_DATE_EPOCH = "1787541405"
-$RemapFlags = @(
-    "-Clink-arg=-Wl,-z,max-page-size=16384"
-    "-Cdebuginfo=0"
-    "-Cstrip=symbols"
-    "--remap-path-prefix=$TaskUserRoot=/build/user"
-    "--remap-path-prefix=$NativeRoot=/src/tun2proxy"
-    "--remap-path-prefix=$TargetRoot=/build/target"
-) -join "`u{1f}"
-$env:CARGO_ENCODED_RUSTFLAGS = $RemapFlags
-$env:CARGO_TARGET_DIR = $TargetRoot
-
-cargo fmt --all -- --check
-cargo test --no-default-features --lib drover_tests -- --test-threads=1
-cargo build --frozen --no-default-features --target aarch64-linux-android --release --lib
-Copy-Item "$TargetRoot\aarch64-linux-android\release\libtun2proxy.so" ..\drover-quest\app\src\main\jniLibs\arm64-v8a\libtun2proxy.so -Force
+# Run this from the Drover for Android repository root.
+pwsh ./native/build-android.ps1 `
+  -SourceDir $Tun2ProxyRoot `
+  -NdkRoot $env:ANDROID_NDK_ROOT
 ```
 
-`--no-default-features` is required for the bundled Direct-only build. It
-excludes tun2proxy's SOCKS/HTTP proxy implementation and its GPL-licensed
-`socks5-impl` dependency; Drover Quest does not use those proxy modes.
-Use `--frozen` for a release so Cargo cannot silently change the pinned lockfile.
+On Windows, omit `-NdkRoot` when the requested NDK is installed at
+`%LOCALAPPDATA%\Android\Sdk\ndk\26.1.10909125`. On CI, install that NDK first
+and pass `ANDROID_NDK_ROOT` explicitly.
+
+The script performs formatting and host unit checks, applies the patch, copies
+the pinned lockfile, and builds the following runtime files:
+
+```text
+app/src/main/jniLibs/arm64-v8a/libtun2proxy.so
+app/src/main/jniLibs/armeabi-v7a/libtun2proxy.so
+app/src/main/jniLibs/x86_64/libtun2proxy.so
+```
+
+It also extracts unstripped DWARF data before stripping the shipped libraries:
+
+```text
+app/build/native-symbols/arm64-v8a/libtun2proxy.so.dbg
+app/build/native-symbols/armeabi-v7a/libtun2proxy.so.dbg
+app/build/native-symbols/x86_64/libtun2proxy.so.dbg
+```
+
+`app/build/` is ignored by Git. Keep these symbol files as private CI
+artifacts for native profiling; do not attach them to the public APK release.
+Use `-SkipHostTests` only when the same patched source and feature combinations
+have already passed in an earlier CI job.
+
+## Verify the libraries
+
+Use the NDK copy of `llvm-readelf`. Each `LOAD` row must report alignment
+`0x4000`, and the machine must match the ABI (`AArch64`, `ARM`, or `X86-64`).
+
+```powershell
+$ReadElf = Join-Path $env:ANDROID_NDK_ROOT 'toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf'
+Get-ChildItem ./app/src/main/jniLibs/*/libtun2proxy.so | ForEach-Object {
+  Write-Host "== $($_.Directory.Name) =="
+  & $ReadElf -h $_.FullName | Select-String 'Class:|Machine:|Type:'
+  & $ReadElf -lW $_.FullName | Select-String '^\s*LOAD\s'
+  & $ReadElf --dyn-syms -W $_.FullName |
+    Select-String 'Java_com_github_shadowsocks_bg_Tun2proxy_(run|stop)'
+  Get-FileHash -Algorithm SHA256 $_.FullName
+}
+```
+
+Windows users should replace `linux-x86_64/bin/llvm-readelf` with
+`windows-x86_64/bin/llvm-readelf.exe`.
+
+The verified release-library SHA-256 values produced by the pinned Windows x64
+build are:
+
+```text
+arm64-v8a   be587789f9060e2e586312bc10abdaffaff5a9c25906522967a1abf59b2df9a8
+armeabi-v7a edca0c73a15d2dc3fc077bb6025368d8811497aa82d98060b1a52f49950ddf0c
+x86_64      6368dcff94c66af0c37bf2f133ecbe82720ed592fdb86c152c795ca8e385dfba
+```

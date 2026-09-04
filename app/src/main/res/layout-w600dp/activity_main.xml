@@ -13,14 +13,14 @@
         android:layout_height="wrap_content"
         android:gravity="center_horizontal"
         android:orientation="vertical"
-        android:paddingStart="20dp"
-        android:paddingTop="28dp"
-        android:paddingEnd="20dp"
-        android:paddingBottom="28dp">
+        android:paddingStart="16dp"
+        android:paddingTop="36dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="36dp">
 
         <ImageView
-            android:layout_width="72dp"
-            android:layout_height="72dp"
+            android:layout_width="76dp"
+            android:layout_height="76dp"
             android:contentDescription="@string/app_name"
             android:src="@drawable/ic_drover" />
 
@@ -31,25 +31,25 @@
             android:gravity="center"
             android:text="@string/title"
             android:textColor="@color/text_primary"
-            android:textSize="30sp"
+            android:textSize="32sp"
             android:textStyle="bold" />
 
         <TextView
-            android:layout_width="match_parent"
+            android:layout_width="520dp"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
             android:gravity="center"
             android:text="@string/subtitle"
             android:textColor="@color/text_secondary"
-            android:textSize="16sp" />
+            android:textSize="18sp" />
 
         <LinearLayout
-            android:layout_width="match_parent"
+            android:layout_width="520dp"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
+            android:layout_marginTop="26dp"
             android:background="@drawable/card_background"
             android:orientation="vertical"
-            android:padding="20dp">
+            android:padding="24dp">
 
             <TextView
                 android:id="@+id/discord_status"
@@ -57,7 +57,7 @@
                 android:layout_height="wrap_content"
                 android:gravity="center"
                 android:textColor="@color/text_secondary"
-                android:textSize="15sp"
+                android:textSize="16sp"
                 tools:text="Discord Stable is selected" />
 
             <Button
@@ -84,37 +84,45 @@
                 android:gravity="center"
                 android:text="@string/status_stopped"
                 android:textColor="@color/text_primary"
-                android:textSize="20sp"
+                android:textSize="21sp"
                 android:textStyle="bold" />
 
-            <Button
-                android:id="@+id/primary_button"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="22dp"
-                android:background="@drawable/button_primary"
-                android:backgroundTint="@null"
-                android:minHeight="60dp"
-                android:text="@string/start_and_open_discord"
-                android:textAllCaps="false"
-                android:textColor="#FFFFFF"
-                android:textSize="17sp"
-                android:textStyle="bold"
-                tools:ignore="ButtonStyle" />
+                android:orientation="horizontal">
 
-            <Button
-                android:id="@+id/stop_button"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:background="@drawable/button_secondary"
-                android:backgroundTint="@null"
-                android:minHeight="52dp"
-                android:text="@string/stop"
-                android:textAllCaps="false"
-                android:textColor="@color/text_primary"
-                android:textSize="16sp"
-                tools:ignore="ButtonStyle" />
+                <Button
+                    android:id="@+id/primary_button"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="2"
+                    android:background="@drawable/button_primary"
+                    android:backgroundTint="@null"
+                    android:minHeight="60dp"
+                    android:text="@string/start_and_open_discord"
+                    android:textAllCaps="false"
+                    android:textColor="#FFFFFF"
+                    android:textSize="17sp"
+                    android:textStyle="bold"
+                    tools:ignore="ButtonStyle" />
+
+                <Button
+                    android:id="@+id/stop_button"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/button_secondary"
+                    android:backgroundTint="@null"
+                    android:minHeight="60dp"
+                    android:text="@string/stop"
+                    android:textAllCaps="false"
+                    android:textColor="@color/text_primary"
+                    android:textSize="16sp"
+                    tools:ignore="ButtonStyle" />
+            </LinearLayout>
 
             <View
                 android:layout_width="match_parent"
@@ -190,7 +198,7 @@
         </LinearLayout>
 
         <TextView
-            android:layout_width="match_parent"
+            android:layout_width="520dp"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:gravity="center"

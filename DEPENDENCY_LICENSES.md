@@ -6,11 +6,11 @@ Generated locally on 2026-09-04 from the sibling tun2proxy checkout's Cargo.toml
 cargo tree --target aarch64-linux-android --no-default-features --locked -e normal,build
 ~~~
 
-The inventory was resolved with Cargo 1.97.1 on the x86_64-pc-windows-msvc host. It includes host-side build dependencies, but excludes dev dependencies, target-inapplicable packages, and disabled optional features. All 169 third-party artifacts resolve from the crates.io registry; there are no Git or additional path dependencies. The final column uses Cargo's declared repository, falling back to the declared homepage for udp-stream.
+The inventory was resolved with Cargo 1.97.1 on the supported x86_64-pc-windows-msvc build host. It deliberately forms a cross-host notice superset: Linux release runners omit the five Windows-only build nodes, while every package used by either supported build host remains covered. It excludes dev dependencies, target-inapplicable runtime packages, and disabled optional features. Of the 171 third-party artifacts, 170 resolve from the crates.io registry and `ipstack` resolves from one exact upstream Git commit containing its non-blocking TCP-drop fix; there are no floating Git branches or additional path dependencies. The final column uses Cargo's declared repository, falling back to the declared homepage for udp-stream.
 
-- Manifest SHA-256: 03C6F9EB7E67ACC906226B91C69547B069606863DA2D7F3EEC37AC3819B594DE
-- Lockfile SHA-256: 74061572B129E82AA3E862ECF5FDA098C4C35CEBA97CA18B4A0CC3C8BCB49583
-- Resolved package/version nodes: 170 total (tun2proxy plus 169 third-party nodes)
+- Manifest SHA-256: 84E0DDA734FD120E84E31795ED28D5F32DDFEFF51FF02F8B13778069C25B4DF5
+- Lockfile SHA-256: 2118CE7F648CEB7B9040A0C86120942818ECDEBDBC7081BCE81B31C89DFE791E
+- Resolved package/version nodes: 172 total (tun2proxy plus 171 third-party nodes)
 - Unknown license entries: none
 - Copyleft license entries: none
 - socks5-impl 0.9.6 (GPL-3.0-or-later) is not in this direct-only graph.
@@ -91,7 +91,7 @@ The inventory was resolved with Cargo 1.97.1 on the x86_64-pc-windows-msvc host.
 | idna | 1.1.0 | MIT OR Apache-2.0 | https://github.com/servo/rust-url/ |
 | idna_adapter | 1.2.1 | Apache-2.0 OR MIT | https://github.com/hsivonen/idna_adapter |
 | ipnet | 2.12.1 | MIT OR Apache-2.0 | https://github.com/krisprice/ipnet |
-| ipstack | 1.0.1 | Apache-2.0 | https://github.com/narrowlink/ipstack |
+| ipstack | 1.0.2-dev (`0f95edc89f23c6700e858eeb5120dd7f6dd1a1c7`) | Apache-2.0 | https://github.com/narrowlink/ipstack |
 | is_terminal_polyfill | 1.70.2 | MIT OR Apache-2.0 | https://github.com/polyfill-rs/is_terminal_polyfill |
 | itoa | 1.0.18 | MIT OR Apache-2.0 | https://github.com/dtolnay/itoa |
 | jiff | 0.2.35 | Unlicense OR MIT | https://github.com/BurntSushi/jiff |
@@ -177,7 +177,9 @@ The inventory was resolved with Cargo 1.97.1 on the x86_64-pc-windows-msvc host.
 | walkdir | 2.5.0 | Unlicense/MIT | https://github.com/BurntSushi/walkdir |
 | winapi-util | 0.1.11 | Unlicense OR MIT | https://github.com/BurntSushi/winapi-util |
 | windows-link | 0.2.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
-| windows-sys | 0.61.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows-sys | 0.52.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows-targets | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows_x86_64_msvc | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | writeable | 0.6.4 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | yoke | 0.8.3 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | yoke-derive | 0.8.2 | Unicode-3.0 | https://github.com/unicode-org/icu4x |

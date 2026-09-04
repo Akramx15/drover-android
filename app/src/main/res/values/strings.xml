@@ -1,22 +1,57 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Drover Quest</string>
-    <string name="title">Drover Quest</string>
-    <string name="subtitle">معالجة اتصال Discord الصوتي محليًا على Meta Quest 3</string>
-    <string name="privacy_note">يعمل على النظارة فقط. لا يوجد خادم، ولا حساب، ولا جمع للبيانات.</string>
-    <string name="discord_found">Discord الرسمي موجود: %1$s</string>
-    <string name="discord_missing">لم يتم العثور على Discord الرسمي (com.discord).</string>
-    <string name="status_stopped">متوقف</string>
-    <string name="status_starting">جارٍ التشغيل…</string>
-    <string name="status_running">يعمل الآن — افتح Discord وجرّب القناة الصوتية</string>
-    <string name="status_stopping">جارٍ الإيقاف…</string>
-    <string name="status_error">خطأ: %1$s</string>
-    <string name="start">تشغيل Drover</string>
-    <string name="stop">إيقاف</string>
-    <string name="how_it_works">يلتقط التطبيق اتصال Discord فقط عبر VPN محلي، ويمرر TCP وUDP مباشرةً. عند أول حزمة لاكتشاف عنوان الصوت يرسل تسلسل Drover ثم يكمل الاتصال.</string>
-    <string name="vpn_permission_denied">لم تُمنح صلاحية VPN.</string>
-    <string name="notification_channel">Drover Quest</string>
-    <string name="notification_title">Drover يعمل لـDiscord</string>
-    <string name="notification_text">اتصال Discord يمر عبر المعالجة المحلية.</string>
-    <string name="stop_action">إيقاف</string>
+    <string name="app_name">Drover for Android</string>
+    <string name="title">Drover for Android</string>
+    <string name="subtitle">Local Discord voice compatibility for Android devices</string>
+    <string name="privacy_note">Runs only on your device. No server, account, analytics, or data collection.</string>
+
+    <string name="discord_stable">Discord Stable</string>
+    <string name="discord_ptb">Discord PTB</string>
+    <string name="discord_canary">Discord Canary</string>
+    <string name="discord_selected">Selected: %1$s</string>
+    <string name="discord_choose_required">More than one Discord version is installed. Choose one to continue.</string>
+    <string name="discord_missing">No supported Discord installation was found.</string>
+    <string name="discord_selection_missing">Choose an installed Discord version before starting Drover.</string>
+    <string name="discord_launch_failed">Discord could not be opened. It may have been disabled or removed.</string>
+    <string name="choose_discord_title">Choose Discord version</string>
+    <string name="choose_discord_button">Choose Discord</string>
+    <string name="change_discord_button">Change Discord version</string>
+
+    <string name="status_stopped">Stopped</string>
+    <string name="status_starting">Starting…</string>
+    <string name="status_restarting">Restarting…</string>
+    <string name="status_running">Running — Discord is ready to open</string>
+    <string name="status_restart_required">The Discord selection changed — restart Drover to apply it</string>
+    <string name="status_stopping">Stopping…</string>
+    <string name="status_error">Error: %1$s</string>
+    <string name="start_and_open_discord">Start and open Discord</string>
+    <string name="open_discord">Open Discord</string>
+    <string name="restart_and_open_discord">Restart and open Discord</string>
+    <string name="stop">Stop</string>
+
+    <string name="auto_start_on_boot">Start Drover when this device starts</string>
+    <string name="auto_start_summary">Off by default. Android starts the foreground VPN service after boot only after you grant VPN permission. Allow notifications to see setup alerts and the Stop action.</string>
+    <string name="open_vpn_settings">Open Android VPN settings</string>
+    <string name="always_on_note">Always-on VPN is supported. Keep “Block connections without VPN” off because Drover routes only the selected Discord app.</string>
+    <string name="vpn_settings_unavailable">VPN settings are not available on this device.</string>
+    <string name="open_source_licenses">Open-source licenses</string>
+    <string name="close">Close</string>
+    <string name="licenses_load_failed">Could not load license notices: %1$s</string>
+
+    <string name="how_it_works">Drover uses an on-device, per-app VPN for the selected Discord installation. TCP and UDP go directly to their destinations; no Drover server is used. The tunnel sleeps while there is no traffic, but any active VPN still uses some memory and power.</string>
+    <string name="vpn_permission_denied">VPN permission was not granted.</string>
+    <string name="vpn_permission_screen_unavailable">Android could not open its VPN approval screen. Open VPN settings, then try again.</string>
+    <string name="vpn_establish_failed">Android could not create the VPN interface.</string>
+    <string name="engine_stopped">The network engine stopped unexpectedly (code %1$d).</string>
+
+    <string name="notification_channel">Drover VPN</string>
+    <string name="notification_title">Drover is running for Discord</string>
+    <string name="notification_text">The selected Discord app is using local compatibility processing.</string>
+    <string name="stop_action">Stop</string>
+
+    <string name="attention_notification_channel">Drover setup alerts</string>
+    <string name="attention_notification_title">Drover needs attention</string>
+    <string name="boot_vpn_permission_required">Open Drover to restore VPN permission before automatic startup can continue.</string>
+    <string name="boot_discord_selection_required">Open Drover to choose an installed Discord version.</string>
+    <string name="boot_start_failed">Drover could not start automatically. Open the app to try again.</string>
 </resources>

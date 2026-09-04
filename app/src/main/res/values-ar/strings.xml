@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Drover للأندرويد</string>
+    <string name="title">Drover للأندرويد</string>
+    <string name="subtitle">تحسين توافق اتصال Discord الصوتي محليًا على أجهزة أندرويد</string>
+    <string name="privacy_note">يعمل على جهازك فقط. لا خادم، ولا حساب، ولا تحليلات، ولا جمع للبيانات.</string>
+
+    <string name="discord_stable">Discord Stable</string>
+    <string name="discord_ptb">Discord PTB</string>
+    <string name="discord_canary">Discord Canary</string>
+    <string name="discord_selected">المحدد: %1$s</string>
+    <string name="discord_choose_required">توجد أكثر من نسخة Discord. اختر نسخة للمتابعة.</string>
+    <string name="discord_missing">لم يتم العثور على نسخة Discord مدعومة.</string>
+    <string name="discord_selection_missing">اختر نسخة Discord المثبتة قبل تشغيل Drover.</string>
+    <string name="discord_launch_failed">تعذّر فتح Discord. ربما تم تعطيله أو حذفه.</string>
+    <string name="choose_discord_title">اختر نسخة Discord</string>
+    <string name="choose_discord_button">اختيار Discord</string>
+    <string name="change_discord_button">تغيير نسخة Discord</string>
+
+    <string name="status_stopped">متوقف</string>
+    <string name="status_starting">جارٍ التشغيل…</string>
+    <string name="status_restarting">جارٍ إعادة التشغيل…</string>
+    <string name="status_running">يعمل الآن — Discord جاهز للفتح</string>
+    <string name="status_restart_required">تغيرت نسخة Discord — أعد تشغيل Drover لتطبيقها</string>
+    <string name="status_stopping">جارٍ الإيقاف…</string>
+    <string name="status_error">خطأ: %1$s</string>
+    <string name="start_and_open_discord">تشغيل وفتح Discord</string>
+    <string name="open_discord">فتح Discord</string>
+    <string name="restart_and_open_discord">إعادة التشغيل وفتح Discord</string>
+    <string name="stop">إيقاف</string>
+
+    <string name="auto_start_on_boot">تشغيل Drover عند تشغيل الجهاز</string>
+    <string name="auto_start_summary">متوقف افتراضيًا. يشغّل أندرويد خدمة VPN الأمامية بعد الإقلاع فقط بعد منحك إذن VPN. اسمح بالإشعارات لرؤية تنبيهات الإعداد وزر الإيقاف.</string>
+    <string name="open_vpn_settings">فتح إعدادات VPN في أندرويد</string>
+    <string name="always_on_note">يدعم Drover وضع VPN الدائم. أبقِ خيار «حظر الاتصالات بدون VPN» متوقفًا لأن Drover يمرر تطبيق Discord المحدد فقط.</string>
+    <string name="vpn_settings_unavailable">إعدادات VPN غير متوفرة على هذا الجهاز.</string>
+    <string name="open_source_licenses">تراخيص المصادر المفتوحة</string>
+    <string name="close">إغلاق</string>
+    <string name="licenses_load_failed">تعذّر تحميل إشعارات التراخيص: %1$s</string>
+
+    <string name="how_it_works">يستخدم Drover شبكة VPN محلية مخصصة لنسخة Discord المحددة. تمر اتصالات TCP وUDP مباشرة إلى وجهاتها ولا يُستخدم أي خادم تابع لـDrover. يدخل النفق في الانتظار عند انعدام الحركة، لكن أي VPN عامل يستهلك قدرًا من الذاكرة والطاقة.</string>
+    <string name="vpn_permission_denied">لم تُمنح صلاحية VPN.</string>
+    <string name="vpn_permission_screen_unavailable">تعذّر على أندرويد فتح شاشة الموافقة على VPN. افتح إعدادات VPN ثم حاول مجددًا.</string>
+    <string name="vpn_establish_failed">تعذّر على أندرويد إنشاء واجهة VPN.</string>
+    <string name="engine_stopped">توقف محرك الشبكة بشكل غير متوقع (الرمز %1$d).</string>
+
+    <string name="notification_channel">شبكة Drover الخاصة</string>
+    <string name="notification_title">Drover يعمل لـDiscord</string>
+    <string name="notification_text">تستخدم نسخة Discord المحددة المعالجة المحلية للتوافق.</string>
+    <string name="stop_action">إيقاف</string>
+
+    <string name="attention_notification_channel">تنبيهات إعداد Drover</string>
+    <string name="attention_notification_title">Drover يحتاج إلى إجراء</string>
+    <string name="boot_vpn_permission_required">افتح Drover لاستعادة إذن VPN قبل متابعة التشغيل التلقائي.</string>
+    <string name="boot_discord_selection_required">افتح Drover لاختيار نسخة Discord المثبتة.</string>
+    <string name="boot_start_failed">تعذّر تشغيل Drover تلقائيًا. افتح التطبيق للمحاولة مجددًا.</string>
+</resources>

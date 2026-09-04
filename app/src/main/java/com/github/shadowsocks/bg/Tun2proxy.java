@@ -8,7 +8,7 @@ public final class Tun2proxy {
     private Tun2proxy() {
     }
 
-    public static native int run(String cliArgs, char tunMtu);
+    public static native int run(String cliArgs, char tunMtu, Runnable readyCallback);
 
     public static native int stop();
 }

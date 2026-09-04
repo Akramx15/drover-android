@@ -1,20 +1,27 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 891e8eb..a45aabe 100644
+index 891e8eb..f9a1790 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -23,8 +23,9 @@ path = "src/bin/udpgw_server.rs"
+@@ -23,8 +23,10 @@ path = "src/bin/udpgw_server.rs"
  required-features = ["udpgw"]
  
  [features]
 -default = ["udpgw"]
 -udpgw = []
-+default = []
++default = ["proxy", "traffic-stats", "udpgw"]
 +proxy = ["dep:socks5-impl"]
++traffic-stats = []
 +udpgw = ["proxy"]
  
  [dependencies]
  async-trait = "0.1.92"
-@@ -43,7 +44,7 @@ log = { version = "0.4.33", features = ["std"] }
+@@ -38,12 +40,12 @@ env_logger = "0.11.11"
+ hashlink = "0.12.1"
+ hickory-proto = "0.26.1"
+ httparse = "1.10.1"
+-ipstack = { version = "1.0.1" }
++ipstack = { git = "https://github.com/narrowlink/ipstack.git", rev = "0f95edc89f23c6700e858eeb5120dd7f6dd1a1c7" }
+ log = { version = "0.4.33", features = ["std"] }
  percent-encoding = "2.3.2"
  serde = { version = "1.0.229", features = ["derive"] }
  shlex = "2.0.1"
@@ -58,6 +65,64 @@ index a628cef..4e1885b 100644
      println!("cargo:rustc-env=BUILD_TIME={build_time}");
  
      #[cfg(target_os = "windows")]
+diff --git a/src/android.rs b/src/android.rs
+index ade2091..3a28b8b 100644
+--- a/src/android.rs
++++ b/src/android.rs
+@@ -5,8 +5,8 @@ use crate::{
+     error::{Error, Result},
+ };
+ use jni::{
+-    Env, EnvUnowned,
+-    objects::{JClass, JString},
++    Env, EnvUnowned, jni_sig, jni_str,
++    objects::{JClass, JObject, JString},
+     sys::{jchar, jint},
+ };
+ 
+@@ -23,8 +23,10 @@ pub unsafe extern "C" fn Java_com_github_shadowsocks_bg_Tun2proxy_run(
+     _clazz: JClass<'_>,
+     cli_args: JString<'_>,
+     tun_mtu: jchar,
++    ready_callback: JObject<'_>,
+ ) -> jint {
+-    env.with_env(|env: &mut Env| -> Result<jint> {
++    let mut setup = None;
++    env.with_env(|env: &mut Env| -> Result<()> {
+         let cli_args = get_java_string(env, &cli_args)?;
+         let tokens = shlex::split(&cli_args).ok_or_else(|| Error::from("Failed to split CLI args"))?;
+         let tokens_clone = tokens.clone();
+@@ -52,10 +54,27 @@ pub unsafe extern "C" fn Java_com_github_shadowsocks_bg_Tun2proxy_run(
+             return Err(Error::from("tun_fd is required for Android"));
+         }
+ 
+-        let v = crate::general_api::general_run_for_api(args, tun_mtu, false);
+-        Ok::<jint, Error>(v)
++        let java_vm = env.get_java_vm()?;
++        let ready_callback = env.new_global_ref(&ready_callback)?;
++        setup = Some((args, java_vm, ready_callback));
++        Ok(())
+     })
+-    .resolve::<jni::errors::LogErrorAndDefault>()
++    .resolve::<jni::errors::LogErrorAndDefault>();
++
++    let Some((args, java_vm, ready_callback)) = setup else {
++        return -7;
++    };
++    let on_ready = Box::new(move || {
++        let result = java_vm.attach_current_thread_for_scope(|env| -> jni::errors::Result<()> {
++            env.call_method(ready_callback.as_obj(), jni_str!("run"), jni_sig!("()V"), &[])?;
++            Ok(())
++        });
++        if let Err(error) = result {
++            log::error!("Failed to notify Android that tun2proxy is ready: {error}");
++        }
++    });
++
++    crate::general_api::general_run_for_api_with_ready(args, tun_mtu, false, Some(on_ready))
+ }
+ 
+ /// # Safety
 diff --git a/src/args.rs b/src/args.rs
 index 1976cbe..da8bd5e 100644
 --- a/src/args.rs
@@ -102,15 +167,142 @@ index 1976cbe..da8bd5e 100644
  macro_rules! version_info {
      () => {
 diff --git a/src/general_api.rs b/src/general_api.rs
-index 6377302..2b285b2 100644
+index 6377302..38fd4cd 100644
 --- a/src/general_api.rs
 +++ b/src/general_api.rs
-@@ -59,8 +59,10 @@ pub fn general_run_for_api(args: Args, tun_mtu: u16, packet_information: bool) -
+@@ -22,45 +22,120 @@ pub unsafe extern "C" fn tun2proxy_run_with_cli_args(cli_args: *const c_char, tu
+     general_run_for_api(args, tun_mtu, packet_information)
+ }
+ 
+-static TUN_QUIT: std::sync::Mutex<Option<tokio_util::sync::CancellationToken>> = std::sync::Mutex::new(None);
++struct ActiveTunnel {
++    generation: u64,
++    shutdown_token: tokio_util::sync::CancellationToken,
++}
+ 
+-pub(crate) fn tun2proxy_stop_internal() -> c_int {
+-    if let Ok(mut lock) = TUN_QUIT.lock() {
+-        if let Some(shutdown_token) = lock.take() {
+-            shutdown_token.cancel();
+-            return 0;
++#[derive(Default)]
++struct TunnelRegistry {
++    next_generation: u64,
++    active: Option<ActiveTunnel>,
++}
++
++static TUN_QUIT: std::sync::LazyLock<(std::sync::Mutex<TunnelRegistry>, std::sync::Condvar)> =
++    std::sync::LazyLock::new(|| (std::sync::Mutex::new(TunnelRegistry::default()), std::sync::Condvar::new()));
++
++struct TunnelRegistration {
++    generation: u64,
++    shutdown_token: tokio_util::sync::CancellationToken,
++}
++
++impl Drop for TunnelRegistration {
++    fn drop(&mut self) {
++        let mut registry = TUN_QUIT.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
++        if registry.active.as_ref().map(|active| active.generation) == Some(self.generation) {
++            registry.active = None;
++            TUN_QUIT.1.notify_all();
+         }
+     }
++}
++
++fn register_tunnel() -> Result<TunnelRegistration, c_int> {
++    let mut registry = TUN_QUIT.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
++    loop {
++        match registry.active.as_ref() {
++            None => {
++                registry.next_generation = registry.next_generation.wrapping_add(1).max(1);
++                let generation = registry.next_generation;
++                let shutdown_token = tokio_util::sync::CancellationToken::new();
++                registry.active = Some(ActiveTunnel {
++                    generation,
++                    shutdown_token: shutdown_token.clone(),
++                });
++                return Ok(TunnelRegistration {
++                    generation,
++                    shutdown_token,
++                });
++            }
++            Some(active) if active.shutdown_token.is_cancelled() => {
++                // A replacement service may arrive after STOP but before the
++                // old runtime has finished unwinding. Wait for its ownership
++                // guard instead of creating overlapping packet loops.
++                registry = TUN_QUIT.1.wait(registry).unwrap_or_else(std::sync::PoisonError::into_inner);
++            }
++            Some(_) => return Err(-1),
++        }
++    }
++}
++
++pub(crate) fn tun2proxy_stop_internal() -> c_int {
++    let registry = TUN_QUIT.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
++    if let Some(active) = registry.active.as_ref() {
++        active.shutdown_token.cancel();
++        return 0;
++    }
+     -1
+ }
+ 
+ pub fn general_run_for_api(args: Args, tun_mtu: u16, packet_information: bool) -> c_int {
++    general_run_for_api_with_ready(args, tun_mtu, packet_information, None)
++}
++
++pub(crate) fn general_run_for_api_with_ready(
++    args: Args,
++    tun_mtu: u16,
++    packet_information: bool,
++    ready_callback: Option<Box<dyn FnOnce() + Send>>,
++) -> c_int {
+     log::set_max_level(args.verbosity.into());
+     if let Err(err) = log::set_boxed_logger(Box::<crate::dump_logger::DumpLogger>::default()) {
+         log::debug!("set logger error: {err}");
+     }
+ 
+-    let shutdown_token = tokio_util::sync::CancellationToken::new();
+-    if let Ok(mut lock) = TUN_QUIT.lock() {
+-        if lock.is_some() {
++    let registration = match register_tunnel() {
++        Ok(registration) => registration,
++        Err(code) => {
+             log::error!("tun2proxy already started");
+-            return -1;
++            return code;
+         }
+-        *lock = Some(shutdown_token.clone());
+-    } else {
+-        log::error!("failed to lock tun2proxy quit token");
+-        return -2;
+-    }
++    };
++    let shutdown_token = registration.shutdown_token.clone();
+ 
+-    let Ok(rt) = tokio::runtime::Builder::new_multi_thread().enable_all().build() else {
++    let mut runtime_builder = tokio::runtime::Builder::new_multi_thread();
++    #[cfg(target_os = "android")]
++    runtime_builder
++        .worker_threads(2)
++        .max_blocking_threads(1)
++        .thread_keep_alive(std::time::Duration::from_secs(1));
++    let Ok(rt) = runtime_builder.enable_all().build() else {
+         log::error!("failed to create tokio runtime with");
+         return -3;
+     };
      let args_clone = args.clone();
      let res = rt.block_on(async move {
-         let ret = general_run_async(args_clone, tun_mtu, packet_information, shutdown_token).await;
+-        let ret = general_run_async(args_clone, tun_mtu, packet_information, shutdown_token).await;
 -        // Spawn a std thread to force exit after timeout so it isn't cancelled
 -        // when the tokio runtime is dropped.
++        let ret = general_run_async_with_ready(
++            args_clone,
++            tun_mtu,
++            packet_information,
++            shutdown_token,
++            ready_callback,
++        )
++        .await;
 +        // Standalone desktop processes use a last-resort exit timer. Android
 +        // embeds this library inside an app process, so exiting the process
 +        // after a normal VPN stop would be incorrect.
@@ -118,8 +310,102 @@ index 6377302..2b285b2 100644
          let _h = std::thread::spawn(move || {
              // Delay some seconds then try to exit current process if not exited yet, normally this case should not happen
              std::thread::sleep(crate::FORCE_EXIT_TIMEOUT);
+@@ -70,7 +145,6 @@ pub fn general_run_for_api(args: Args, tun_mtu: u16, packet_information: bool) -
+         tokio::time::sleep(std::time::Duration::from_micros(100)).await;
+         ret
+     });
+-
+     let res = match res {
+         Ok(sessions) => {
+             log::debug!("tun2proxy exited normally, current session count: {sessions}");
+@@ -82,19 +156,25 @@ pub fn general_run_for_api(args: Args, tun_mtu: u16, packet_information: bool) -
+         }
+     };
+ 
+-    if let Ok(mut lock) = TUN_QUIT.lock() {
+-        lock.take();
+-    }
+-
+     res
+ }
+ 
+ /// Run the tun2proxy component with some arguments.
+ pub async fn general_run_async(
++    args: Args,
++    tun_mtu: u16,
++    packet_information: bool,
++    shutdown_token: tokio_util::sync::CancellationToken,
++) -> std::io::Result<usize> {
++    general_run_async_with_ready(args, tun_mtu, packet_information, shutdown_token, None).await
++}
++
++async fn general_run_async_with_ready(
+     args: Args,
+     tun_mtu: u16,
+     _packet_information: bool,
+     shutdown_token: tokio_util::sync::CancellationToken,
++    ready_callback: Option<Box<dyn FnOnce() + Send>>,
+ ) -> std::io::Result<usize> {
+     let mut tun_config = tun::Configuration::default();
+ 
+@@ -186,7 +266,13 @@ pub async fn general_run_async(
+         }
+     }
+ 
+-    let join_handle = tokio::spawn(crate::run(device, tun_mtu, args.clone(), shutdown_token.clone()));
++    let join_handle = tokio::spawn(crate::run_with_ready(
++        device,
++        tun_mtu,
++        args.clone(),
++        shutdown_token.clone(),
++        ready_callback,
++    ));
+ 
+     match join_handle.await? {
+         Ok(sessions) => {
+@@ -211,3 +297,40 @@ pub async fn general_run_async(
+ pub unsafe extern "C" fn tun2proxy_stop() -> c_int {
+     tun2proxy_stop_internal()
+ }
++
++#[cfg(test)]
++mod drover_registry_tests {
++    use super::{register_tunnel, tun2proxy_stop_internal};
++    use std::{sync::mpsc, time::Duration};
++
++    #[test]
++    fn drover_tests_live_generation_rejects_an_overlap() {
++        let first = register_tunnel().expect("first tunnel should register");
++        assert!(matches!(register_tunnel(), Err(-1)));
++        drop(first);
++
++        let replacement = register_tunnel().expect("slot should clear with its owner");
++        drop(replacement);
++    }
++
++    #[test]
++    fn drover_tests_cancelled_generation_owns_slot_until_drop() {
++        let first = register_tunnel().expect("first tunnel should register");
++        assert_eq!(tun2proxy_stop_internal(), 0);
++
++        let (registered_tx, registered_rx) = mpsc::channel();
++        let waiter = std::thread::spawn(move || {
++            let replacement = register_tunnel().expect("replacement should eventually register");
++            registered_tx.send(replacement.generation).unwrap();
++            replacement
++        });
++
++        assert!(registered_rx.recv_timeout(Duration::from_millis(20)).is_err());
++        let old_generation = first.generation;
++        drop(first);
++        let new_generation = registered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
++        assert_ne!(old_generation, new_generation);
++
++        drop(waiter.join().unwrap());
++    }
++}
 diff --git a/src/lib.rs b/src/lib.rs
-index 2cab17f..89c5910 100644
+index 2cab17f..c36470c 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -1,11 +1,12 @@
@@ -178,7 +464,7 @@ index 2cab17f..89c5910 100644
  mod socks;
  mod traffic_status;
  #[cfg(feature = "udpgw")]
-@@ -67,6 +71,34 @@ pub mod win_svc;
+@@ -67,6 +71,53 @@ pub mod win_svc;
  
  const DNS_PORT: u16 = 53;
  
@@ -188,13 +474,22 @@ index 2cab17f..89c5910 100644
 +struct DroverUdpTracker {
 +    sources: Mutex<HashMap<SocketAddr, Instant>>,
 +    timeout: Duration,
++    refresh_interval: Duration,
 +}
 +
 +impl DroverUdpTracker {
 +    fn new(timeout: Duration) -> Self {
++        // Refresh at most every 30 seconds (and four times inside shorter
++        // expiry windows). The hot datagram path only checks an Instant; it
++        // does not lock or write the shared map for every packet.
++        let refresh_interval = std::cmp::max(
++            Duration::from_millis(1),
++            std::cmp::min(timeout / 4, Duration::from_secs(30)),
++        );
 +        Self {
 +            sources: Mutex::new(HashMap::new()),
 +            timeout,
++            refresh_interval,
 +        }
 +    }
 +
@@ -205,15 +500,44 @@ index 2cab17f..89c5910 100644
 +        sources.insert(source, now).is_none()
 +    }
 +
-+    async fn touch(&self, source: SocketAddr) {
-+        self.sources.lock().await.insert(source, Instant::now());
++    fn next_refresh_deadline(&self) -> Instant {
++        Instant::now() + self.refresh_interval
++    }
++
++    async fn touch_if_due(&self, source: SocketAddr, next_refresh: &mut Instant) -> bool {
++        let now = Instant::now();
++        if now < *next_refresh {
++            return false;
++        }
++        self.sources.lock().await.insert(source, now);
++        *next_refresh = now + self.refresh_interval;
++        true
 +    }
 +}
 +
  #[allow(unused)]
  #[derive(Hash, Copy, Clone, Eq, PartialEq, Debug)]
  #[cfg_attr(
-@@ -202,7 +234,9 @@ where
+@@ -196,13 +247,28 @@ async fn create_udp_stream(socket_queue: &Option<Arc<SocketQueue>>, peer: Socket
+ /// # Returns
+ /// * The number of sessions while exiting
+ pub async fn run<D>(device: D, mtu: u16, args: Args, shutdown_token: CancellationToken) -> crate::Result<usize>
++where
++    D: AsyncRead + AsyncWrite + Unpin + Send + 'static,
++{
++    run_with_ready(device, mtu, args, shutdown_token, None).await
++}
++
++pub(crate) async fn run_with_ready<D>(
++    device: D,
++    mtu: u16,
++    args: Args,
++    shutdown_token: CancellationToken,
++    ready_callback: Option<Box<dyn FnOnce() + Send>>,
++) -> crate::Result<usize>
+ where
+     D: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+ {
      log::info!("{} {} starting...", env!("CARGO_PKG_NAME"), version_info!());
      log::info!("Proxy {} server: {}", args.proxy.proxy_type, args.proxy.addr);
  
@@ -223,7 +547,7 @@ index 2cab17f..89c5910 100644
      let key = args.proxy.credentials.clone();
      let dns_addr = args.dns_addr;
      let ipv6_enabled = args.ipv6_enabled;
-@@ -228,14 +262,20 @@ where
+@@ -228,14 +294,20 @@ where
      #[cfg(not(target_os = "linux"))]
      let socket_queue = None;
  
@@ -247,10 +571,11 @@ index 2cab17f..89c5910 100644
      let mut ipstack_config = ipstack::IpStackConfig::default();
      ipstack_config.mtu(mtu)?;
      let mut tcp_cfg = ipstack::TcpConfig::default();
-@@ -270,6 +310,11 @@ where
+@@ -270,8 +342,18 @@ where
      });
  
      let task_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
++    let mut session_tasks = tokio::task::JoinSet::new();
 +    // A TUN interface exposes source endpoints rather than the app's real
 +    // socket handles. Keep an active source claimed for two ipstack timeout
 +    // windows so destination-specific sessions still behave like one socket.
@@ -258,8 +583,36 @@ index 2cab17f..89c5910 100644
 +    let drover_udp_tracker = Arc::new(DroverUdpTracker::new(drover_udp_timeout));
      use std::sync::atomic::Ordering::Relaxed;
  
++    if let Some(ready_callback) = ready_callback {
++        ready_callback();
++    }
++
      loop {
-@@ -327,6 +372,10 @@ where
+         let task_count = task_count.clone();
+         let virtual_dns = virtual_dns.clone();
+@@ -280,6 +362,12 @@ where
+                 log::info!("Shutdown received");
+                 break;
+             }
++            completed = session_tasks.join_next(), if !session_tasks.is_empty() => {
++                if let Some(Err(err)) = completed {
++                    log::warn!("Session task ended abnormally: {err}");
++                }
++                continue;
++            }
+             ip_stack_stream = ip_stack.accept() => {
+                 ip_stack_stream?
+             }
+@@ -307,7 +395,7 @@ where
+                 };
+                 let proxy_handler = mgr.new_proxy_handler(info, domain_name, false).await?;
+                 let socket_queue = socket_queue.clone();
+-                tokio::spawn(async move {
++                session_tasks.spawn(async move {
+                     if let Err(err) = handle_tcp_session(tcp, proxy_handler, socket_queue).await {
+                         log::error!("{info} error \"{err}\"");
+                     }
+@@ -327,6 +415,10 @@ where
                  let count = task_count.fetch_add(1, Relaxed).saturating_add(1);
                  log::trace!("Session count {count}");
                  let mut info = SessionInfo::new(udp.local_addr(), udp.peer_addr(), IpProtocol::Udp);
@@ -270,12 +623,40 @@ index 2cab17f..89c5910 100644
                  if info.dst.port() == DNS_PORT {
                      if is_private_ip(info.dst.ip()) {
                          info.dst.set_ip(dns_addr); // !!! Here we change the destination address to remote DNS server!!!
-@@ -391,9 +440,20 @@ where
+@@ -335,7 +427,7 @@ where
+                         info.protocol = IpProtocol::Tcp;
+                         let proxy_handler = mgr.new_proxy_handler(info, None, false).await?;
+                         let socket_queue = socket_queue.clone();
+-                        tokio::spawn(async move {
++                        session_tasks.spawn(async move {
+                             if let Err(err) = handle_dns_over_tcp_session(udp, proxy_handler, socket_queue, ipv6_enabled).await {
+                                 log::error!("{info} error \"{err}\"");
+                             }
+@@ -345,7 +437,7 @@ where
+                         continue;
+                     }
+                     if args.dns == ArgDns::Virtual {
+-                        tokio::spawn(async move {
++                        session_tasks.spawn(async move {
+                             if let Some(virtual_dns) = virtual_dns {
+                                 if let Err(err) = handle_virtual_dns_session(udp, virtual_dns).await {
+                                     log::error!("{info} error \"{err}\"");
+@@ -374,7 +466,7 @@ where
+                     let tcpinfo = SessionInfo::new(tcp_src, udpgw.get_udpgw_server_addr(), IpProtocol::Tcp);
+                     let proxy_handler = mgr.new_proxy_handler(tcpinfo, None, false).await?;
+                     let queue = socket_queue.clone();
+-                    tokio::spawn(async move {
++                    session_tasks.spawn(async move {
+                         let dst = info.dst; // real UDP destination address
+                         let dst_addr = match domain_name {
+                             Some(ref d) => socks5_impl::protocol::Address::from((d.clone(), dst.port())),
+@@ -391,9 +483,20 @@ where
                  match mgr.new_proxy_handler(info, domain_name, true).await {
                      Ok(proxy_handler) => {
                          let socket_queue = socket_queue.clone();
+-                        tokio::spawn(async move {
 +                        let drover_udp_tracker = drover_udp_tracker.clone();
-                         tokio::spawn(async move {
++                        session_tasks.spawn(async move {
                              let ty = args.proxy.proxy_type;
 -                            if let Err(err) = handle_udp_associate_session(udp, ty, proxy_handler, socket_queue, ipv6_enabled).await {
 +                            if let Err(err) = handle_udp_associate_session(
@@ -292,7 +673,44 @@ index 2cab17f..89c5910 100644
                                  log::info!("Ending {info} with \"{err}\"");
                              }
                              let count = task_count.fetch_sub(1, Relaxed).saturating_sub(1);
-@@ -645,16 +705,33 @@ async fn handle_udp_gateway_session(
+@@ -416,7 +519,11 @@ where
+             }
+         }
+     }
+-    Ok(task_count.load(Relaxed))
++    let active_sessions = task_count.load(Relaxed);
++    session_tasks.abort_all();
++    while session_tasks.join_next().await.is_some() {}
++    drop(ip_stack);
++    Ok(active_sessions)
+ }
+ 
+ #[cfg(all(test, target_os = "linux"))]
+@@ -456,6 +563,7 @@ async fn handle_virtual_dns_session(mut udp: IpStackUdpStream, dns: Arc<Mutex<Vi
+     Ok(())
+ }
+ 
++#[cfg(feature = "traffic-stats")]
+ async fn copy_and_record_traffic<R, W>(reader: &mut R, writer: &mut W, is_tx: bool) -> tokio::io::Result<u64>
+ where
+     R: tokio::io::AsyncRead + Unpin + ?Sized,
+@@ -479,6 +587,15 @@ where
+     Ok(total)
+ }
+ 
++#[cfg(not(feature = "traffic-stats"))]
++async fn copy_and_record_traffic<R, W>(reader: &mut R, writer: &mut W, _is_tx: bool) -> tokio::io::Result<u64>
++where
++    R: tokio::io::AsyncRead + Unpin + ?Sized,
++    W: tokio::io::AsyncWrite + Unpin + ?Sized,
++{
++    tokio::io::copy(reader, writer).await
++}
++
+ async fn handle_tcp_session(
+     mut tcp_stack: IpStackTcpStream,
+     proxy_handler: Arc<Mutex<dyn ProxyHandler>>,
+@@ -645,16 +762,33 @@ async fn handle_udp_gateway_session(
      Ok(())
  }
  
@@ -328,10 +746,11 @@ index 2cab17f..89c5910 100644
          let handler = proxy_handler.lock().await;
          (
              handler.get_session_info(),
-@@ -681,6 +758,10 @@ async fn handle_udp_associate_session(
+@@ -681,6 +815,11 @@ async fn handle_udp_associate_session(
  
      let mut buf1 = [0_u8; 4096];
      let mut buf2 = [0_u8; 4096];
++    let mut drover_next_source_refresh = drover_udp_tracker.next_refresh_deadline();
 +    // Discord starts a voice UDP flow with a 74-byte IP discovery packet.
 +    // discord-drover sends two one-byte datagrams before that first packet;
 +    // reproducing the same sequence here lets the Android VPN companion apply
@@ -339,14 +758,16 @@ index 2cab17f..89c5910 100644
      loop {
          tokio::select! {
              len = udp_stack.read(&mut buf1) => {
-@@ -692,8 +773,18 @@ async fn handle_udp_associate_session(
+@@ -692,8 +831,20 @@ async fn handle_udp_associate_session(
  
                  crate::traffic_status::traffic_status_update(len, 0)?;
  
 +                let is_first_send = std::mem::take(&mut drover_first_send_for_source);
-+                // Refresh the source before any network write or delay. This
-+                // approximates Winsock socket lifetime using what a TUN can see.
-+                drover_udp_tracker.touch(session_info.src).await;
++                // Coalesce shared tracker writes. This refreshes well inside
++                // the source expiry window without locking for every datagram.
++                drover_udp_tracker
++                    .touch_if_due(session_info.src, &mut drover_next_source_refresh)
++                    .await;
 +                let apply_drover_preamble = !matches!(proxy_type, ProxyType::Socks4 | ProxyType::Socks5)
 +                    && session_info.dst.port() != DNS_PORT
 +                    && is_first_send
@@ -359,7 +780,7 @@ index 2cab17f..89c5910 100644
                          Address::DomainAddress(domain_name.clone().into(), session_info.dst.port())
                      } else {
                          session_info.dst.into()
-@@ -706,8 +797,14 @@ async fn handle_udp_associate_session(
+@@ -706,8 +857,14 @@ async fn handle_udp_associate_session(
  
                      udp_server.write_all(&s5_udp_data).await?;
                  } else {
@@ -375,7 +796,7 @@ index 2cab17f..89c5910 100644
              }
              len = udp_server.read(&mut buf2) => {
                  let len = len?;
-@@ -718,6 +815,7 @@ async fn handle_udp_associate_session(
+@@ -718,6 +875,7 @@ async fn handle_udp_associate_session(
  
                  crate::traffic_status::traffic_status_update(0, len)?;
  
@@ -383,7 +804,7 @@ index 2cab17f..89c5910 100644
                  if let ProxyType::Socks4 | ProxyType::Socks5 = proxy_type {
                      // Remove SOCKS5 UDP header from the server data
                      let header = UdpHeader::retrieve_from_stream(&mut &buf2[..])?;
-@@ -725,7 +823,7 @@ async fn handle_udp_associate_session(
+@@ -725,7 +883,7 @@ async fn handle_udp_associate_session(
  
                      let buf = if session_info.dst.port() == DNS_PORT {
                          let mut message = dns::parse_data_to_dns_message(data, false)?;
@@ -392,7 +813,7 @@ index 2cab17f..89c5910 100644
                              dns::remove_ipv6_entries(&mut message);
                          }
                          message.to_vec()?
-@@ -737,6 +835,9 @@ async fn handle_udp_associate_session(
+@@ -737,6 +895,9 @@ async fn handle_udp_associate_session(
                  } else {
                      udp_stack.write_all(buf2).await?;
                  }
@@ -402,7 +823,7 @@ index 2cab17f..89c5910 100644
              }
          }
      }
-@@ -888,3 +989,86 @@ async fn handle_proxy_session(server: &mut TcpStream, proxy_handler: Arc<Mutex<d
+@@ -888,3 +1049,133 @@ async fn handle_proxy_session(server: &mut TcpStream, proxy_handler: Arc<Mutex<d
      crate::traffic_status::traffic_status_update(tx, rx)?;
      Ok(proxy_handler.get_udp_associate())
  }
@@ -440,6 +861,30 @@ index 2cab17f..89c5910 100644
 +        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
 +            Poll::Ready(Ok(()))
 +        }
++    }
++
++    #[tokio::test]
++    async fn completed_session_task_is_reaped_without_polling_an_empty_set() {
++        let mut session_tasks = tokio::task::JoinSet::new();
++        session_tasks.spawn(async {});
++
++        let completed = tokio::select! {
++            completed = session_tasks.join_next(), if !session_tasks.is_empty() => completed,
++            else => panic!("a non-empty session task set must be polled"),
++        };
++
++        assert!(matches!(completed, Some(Ok(()))));
++        assert!(session_tasks.is_empty());
++
++        enum Branch {
++            EmptySet,
++            Timer,
++        }
++        let branch = tokio::select! {
++            _ = session_tasks.join_next(), if !session_tasks.is_empty() => Branch::EmptySet,
++            _ = tokio::time::sleep(Duration::from_millis(1)) => Branch::Timer,
++        };
++        assert!(matches!(branch, Branch::Timer));
 +    }
 +
 +    #[tokio::test]
@@ -484,8 +929,118 @@ index 2cab17f..89c5910 100644
 +
 +        assert!(tracker.claim(source).await);
 +        assert!(!tracker.claim(source).await);
-+        tracker.touch(source).await;
-+        tokio::time::sleep(Duration::from_millis(25)).await;
++
++        // Make the entry deterministically stale instead of relying on a
++        // timing-sensitive sleep in the test.
++        tracker
++            .sources
++            .lock()
++            .await
++            .insert(source, Instant::now() - Duration::from_millis(21));
 +        assert!(tracker.claim(source).await);
 +    }
++
++    #[tokio::test]
++    async fn udp_source_refresh_skips_shared_write_until_due() {
++        let source: SocketAddr = "10.77.0.1:40001".parse().unwrap();
++        let tracker = DroverUdpTracker::new(Duration::from_secs(120));
++        assert!(tracker.claim(source).await);
++        let first_seen = *tracker.sources.lock().await.get(&source).unwrap();
++
++        let mut next_refresh = Instant::now() + Duration::from_secs(30);
++        assert!(!tracker.touch_if_due(source, &mut next_refresh).await);
++        assert_eq!(*tracker.sources.lock().await.get(&source).unwrap(), first_seen);
++
++        next_refresh = Instant::now();
++        assert!(tracker.touch_if_due(source, &mut next_refresh).await);
++        assert!(*tracker.sources.lock().await.get(&source).unwrap() >= first_seen);
++        assert!(next_refresh > Instant::now());
++    }
 +}
+diff --git a/src/traffic_status.rs b/src/traffic_status.rs
+index 9f32b7c..bf047f8 100644
+--- a/src/traffic_status.rs
++++ b/src/traffic_status.rs
+@@ -1,11 +1,15 @@
+-use crate::error::{Error, Result};
++use crate::error::Result;
++#[cfg(feature = "traffic-stats")]
++use crate::error::Error;
+ use std::os::raw::c_void;
++#[cfg(feature = "traffic-stats")]
+ use std::sync::{LazyLock, Mutex};
+ 
+ /// # Safety
+ ///
+ /// set traffic status callback.
+ #[unsafe(no_mangle)]
++#[cfg(feature = "traffic-stats")]
+ pub unsafe extern "C" fn tun2proxy_set_traffic_status_callback(
+     send_interval_secs: u32,
+     callback: Option<unsafe extern "C" fn(*const TrafficStatus, *mut c_void)>,
+@@ -21,6 +25,17 @@ pub unsafe extern "C" fn tun2proxy_set_traffic_status_callback(
+     }
+ }
+ 
++/// Direct-only mobile builds do not consume traffic totals. Keep the public C
++/// symbol for compatibility while compiling all counters and locks out.
++#[unsafe(no_mangle)]
++#[cfg(not(feature = "traffic-stats"))]
++pub unsafe extern "C" fn tun2proxy_set_traffic_status_callback(
++    _send_interval_secs: u32,
++    _callback: Option<unsafe extern "C" fn(*const TrafficStatus, *mut c_void)>,
++    _ctx: *mut c_void,
++) {
++}
++
+ #[repr(C)]
+ #[derive(Debug, Default, Copy, Clone)]
+ pub struct TrafficStatus {
+@@ -29,8 +44,10 @@ pub struct TrafficStatus {
+ }
+ 
+ #[derive(Clone)]
++#[cfg(feature = "traffic-stats")]
+ struct TrafficStatusCallback(Option<unsafe extern "C" fn(*const TrafficStatus, *mut c_void)>, *mut c_void);
+ 
++#[cfg(feature = "traffic-stats")]
+ impl TrafficStatusCallback {
+     unsafe fn call(self, info: &TrafficStatus) {
+         if let Some(cb) = self.0 {
+@@ -39,15 +56,22 @@ impl TrafficStatusCallback {
+     }
+ }
+ 
++#[cfg(feature = "traffic-stats")]
+ unsafe impl Send for TrafficStatusCallback {}
++#[cfg(feature = "traffic-stats")]
+ unsafe impl Sync for TrafficStatusCallback {}
+ 
++#[cfg(feature = "traffic-stats")]
+ static TRAFFIC_STATUS_CALLBACK: std::sync::Mutex<Option<TrafficStatusCallback>> = std::sync::Mutex::new(None);
++#[cfg(feature = "traffic-stats")]
+ static SEND_INTERVAL_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+ 
++#[cfg(feature = "traffic-stats")]
+ static TRAFFIC_STATUS: LazyLock<Mutex<TrafficStatus>> = LazyLock::new(|| Mutex::new(TrafficStatus::default()));
++#[cfg(feature = "traffic-stats")]
+ static TIME_STAMP: LazyLock<Mutex<std::time::Instant>> = LazyLock::new(|| Mutex::new(std::time::Instant::now()));
+ 
++#[cfg(feature = "traffic-stats")]
+ pub(crate) fn traffic_status_update(delta_tx: usize, delta_rx: usize) -> Result<()> {
+     {
+         let is_none_or_error = TRAFFIC_STATUS_CALLBACK.lock().map(|guard| guard.is_none()).unwrap_or_else(|e| {
+@@ -76,6 +100,13 @@ pub(crate) fn traffic_status_update(delta_tx: usize, delta_rx: usize) -> Result<
+     Ok(())
+ }
+ 
++#[cfg(not(feature = "traffic-stats"))]
++#[inline(always)]
++pub(crate) fn traffic_status_update(_delta_tx: usize, _delta_rx: usize) -> Result<()> {
++    Ok(())
++}
++
++#[cfg(feature = "traffic-stats")]
+ fn send_traffic_stat(traffic_status: &TrafficStatus) -> Result<()> {
+     if let Ok(cb) = TRAFFIC_STATUS_CALLBACK.lock() {
+         if let Some(cb) = cb.clone() {
