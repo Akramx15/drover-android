@@ -18,11 +18,14 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "app.drover.android"
+        // The lab must install alongside the public app and must never be
+        // mistaken for a production update, even when someone assembles a
+        // release build from this experimental branch.
+        applicationId = "app.drover.android.lab"
         minSdk = 29
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0-alpha.1"
     }
 
     signingConfigs {

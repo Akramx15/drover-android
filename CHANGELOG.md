@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.3.0-alpha.1 (experimental pre-release) - 2026-09-10
+
+- Add an Android app-family selector for Discord, WhatsApp Messenger, and
+  WhatsApp Business while keeping the existing Discord compatibility strategy.
+- Add a WhatsApp **observe-only** strategy that writes a bounded local JSONL
+  trace of transport metadata. Application datagram payload bytes are not
+  intentionally altered; the userspace tunnel can still change source ports
+  and timing. It captures no
+  packet payloads, DNS question names, messages, microphone data, or audio.
+- Add explicit stop-before-export behavior and a paired working/failing network
+  test protocol in `LAB_TESTING.md`. This alpha does not yet claim to unblock
+  WhatsApp calls.
+- Add an experimental iOS Packet Tunnel project. Its per-app WhatsApp mapping
+  requires Development provisioning (or managed-device MDM); unsigned CI
+  output is for build inspection and is not an installable IPA.
+- Add separate lab CI for Android APK artifacts, the patched Apple XCFramework,
+  XcodeGen 2.46.0 project generation, and an unsigned iOS device build.
+- Keep the tracked iOS Info.plist and entitlement files as the source of truth
+  instead of allowing XcodeGen to replace the required WhatsApp mapping,
+  Packet Tunnel declaration, Network Extension, and App Group metadata.
+- Build the unsigned iOS artifact in Release mode, fail CI when required bundle
+  metadata or unsigned-state checks fail, and include a resign-input IPA. It is
+  not installable until the app and extension receive matching Development
+  profiles.
+- Add a tag-gated, fail-closed Android pre-release workflow that publishes only
+  signed Universal and ARM64 APKs for `v0.3.0-alpha.1`; no iOS signing material
+  or IPA is published.
+
+Stable `0.2.0` remains the Discord-only release and its release/signing workflow
+is unchanged.
+
 ## 0.2.0 (pre-release) - 2026-09-05
 
 - Rename the product to Drover for Android and move the application ID to

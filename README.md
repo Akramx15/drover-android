@@ -9,6 +9,16 @@ it does not need a PC, DNS host, remote VPN server, or proxy.
 This is an unofficial community project. It is not affiliated with or endorsed
 by Discord or Meta.
 
+> **Experimental branch:** `0.3.0-alpha.1` adds an observe-only WhatsApp lab on
+> Android and iOS development source. It records bounded transport metadata but
+> does not intentionally alter WhatsApp datagram payload bytes and does not
+> claim to unblock calls. Use the
+> matched working/failing procedure in [`LAB_TESTING.md`](LAB_TESTING.md).
+> Version `0.2.0` below remains the stable Discord-only download.
+> Tagged lab pre-releases use the repository release certificate. CI **debug**
+> APK signatures may change between runs; export a trace before uninstalling
+> `app.drover.android.lab` to replace an incompatible debug artifact.
+
 ## Download
 
 Version 0.2.0 is distributed only through this repository's GitHub Releases.
@@ -124,6 +134,13 @@ Functional stability takes priority over an optimization that causes packet
 loss or voice dropouts.
 
 ## Build from source
+
+The `0.3.0-alpha.1` experiment is intentionally kept separate from the stable
+`0.2.0` release path. Its CI artifacts contain lab APKs, an **unsigned** iOS
+device-app archive, and an unsigned resign-input IPA. Neither iOS file is
+installable until both the host app and extension receive matching Development
+signing. The signing and per-app VPN prerequisites are documented in
+[`ios/BUILDING.md`](ios/BUILDING.md).
 
 Requirements:
 

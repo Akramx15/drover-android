@@ -1,5 +1,5 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 891e8eb..f9a1790 100644
+index 891e8ebd88d5f64c49c86510205d92c29c64851e..f9a1790f3c93d6c0521d445e80f408921046d958 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -23,8 +23,10 @@ path = "src/bin/udpgw_server.rs"
@@ -31,7 +31,7 @@ index 891e8eb..f9a1790 100644
      "serde",
  ] }
 diff --git a/build-android.sh b/build-android.sh
-index a73007b..b28c757 100755
+index a73007b76269561aa40bd0331f1731e6562d7e2e..b28c757b27ff37cf29d04e101812141fa87d4151 100755
 --- a/build-android.sh
 +++ b/build-android.sh
 @@ -104,7 +104,7 @@ function build_android() {
@@ -44,7 +44,7 @@ index a73007b..b28c757 100755
              echo "Failed to build for target $target"
              exit 1
 diff --git a/build.rs b/build.rs
-index a628cef..4e1885b 100644
+index a628cef7c563e904593f05455d321cfccf45f43b..4e1885b1ae629b05232f160e270fdbe0cf020f1d 100644
 --- a/build.rs
 +++ b/build.rs
 @@ -4,8 +4,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -65,8 +65,25 @@ index a628cef..4e1885b 100644
      println!("cargo:rustc-env=BUILD_TIME={build_time}");
  
      #[cfg(target_os = "windows")]
+diff --git a/cbindgen.toml b/cbindgen.toml
+index 5ec4ba28ca3ad17e924bf08919d8ce950fc3bb3d..9b8498bb12bc196e226df7697bed55a5c977d2d7 100644
+--- a/cbindgen.toml
++++ b/cbindgen.toml
+@@ -4,9 +4,12 @@ cpp_compat = true
+ [export]
+ include = [
+     "tun2proxy_run_with_cli",
++    "tun2proxy_run_with_cli_args",
++    "tun2proxy_run_with_cli_args_and_ready",
+     "tun2proxy_stop",
+     "tun2proxy_set_log_callback",
+     "tun2proxy_set_traffic_status_callback",
++    "Tun2proxyReadyCallback",
+ ]
+ exclude = [
+     "Java_com_github_shadowsocks_bg_Tun2proxy_run",
 diff --git a/src/android.rs b/src/android.rs
-index ade2091..3a28b8b 100644
+index ade209142158e8b5f5cb8c4b1bac67fa72530180..8285e1968d9af981f9cbe2ccd76b3debccc8c540 100644
 --- a/src/android.rs
 +++ b/src/android.rs
 @@ -5,8 +5,8 @@ use crate::{
@@ -119,15 +136,15 @@ index ade2091..3a28b8b 100644
 +        }
 +    });
 +
-+    crate::general_api::general_run_for_api_with_ready(args, tun_mtu, false, Some(on_ready))
++    crate::general_api::general_run_for_api_with_ready(args, tun_mtu, false, Some(on_ready), true)
  }
  
  /// # Safety
 diff --git a/src/args.rs b/src/args.rs
-index 1976cbe..da8bd5e 100644
+index 1976cbefcedc3ab363f2432f82046f6da735714b..b6730e9f9b3e034264ed43e2b30ee7e464ab6b62 100644
 --- a/src/args.rs
 +++ b/src/args.rs
-@@ -1,5 +1,6 @@
+@@ -1,13 +1,39 @@
  use crate::{Error, Result};
 -use socks5_impl::protocol::UserKey;
 +#[cfg(feature = "proxy")]
@@ -135,8 +152,10 @@ index 1976cbe..da8bd5e 100644
  use tproxy_config::IpCidr;
  
  #[cfg(target_os = "linux")]
-@@ -8,6 +9,30 @@ use std::ffi::OsString;
+ use std::ffi::OsString;
+ 
  use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
++use std::path::PathBuf;
  use std::str::FromStr;
  
 +#[cfg(not(feature = "proxy"))]
@@ -166,18 +185,113 @@ index 1976cbe..da8bd5e 100644
  #[macro_export]
  macro_rules! version_info {
      () => {
+@@ -144,6 +170,16 @@ pub struct Args {
+     #[arg(long, value_name = "number", default_value = "200")]
+     pub max_sessions: usize,
+ 
++    /// Optional Drover packet strategy. The safe default observes traffic
++    /// without changing application datagrams.
++    #[arg(long, value_enum, default_value = "none")]
++    pub drover_strategy: DroverStrategy,
++
++    /// Write bounded, payload-free diagnostic metadata as JSON Lines.
++    #[arg(long, value_name = "path")]
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub lab_trace_file: Option<PathBuf>,
++
+     /// UDP gateway server address, forwards UDP packets via specified TCP server
+     #[cfg(feature = "udpgw")]
+     #[arg(long, value_name = "IP:PORT")]
+@@ -206,6 +242,8 @@ impl Default for Args {
+             daemonize: false,
+             exit_on_fatal_error: false,
+             max_sessions: 200,
++            drover_strategy: DroverStrategy::None,
++            lab_trace_file: None,
+             #[cfg(feature = "udpgw")]
+             udpgw_server: None,
+             #[cfg(feature = "udpgw")]
+@@ -216,6 +254,25 @@ impl Default for Args {
+     }
+ }
+ 
++/// Application-specific packet treatment. `None` is deliberately the default
++/// so a newly added application can never receive Discord's compatibility
++/// datagrams by accident.
++#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, clap::ValueEnum, serde::Serialize, serde::Deserialize)]
++pub enum DroverStrategy {
++    #[default]
++    None,
++    Discord,
++}
++
++impl std::fmt::Display for DroverStrategy {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        match self {
++            Self::None => write!(f, "none"),
++            Self::Discord => write!(f, "discord"),
++        }
++    }
++}
++
+ impl Args {
+     #[allow(clippy::let_and_return)]
+     pub fn parse_args() -> Self {
 diff --git a/src/general_api.rs b/src/general_api.rs
-index 6377302..5b0275b 100644
+index 6377302270cdc72a87905aed6c49e1e3356ca0d2..27f53ae90551fc44fc8bb97742b213d92e2598b2 100644
 --- a/src/general_api.rs
 +++ b/src/general_api.rs
-@@ -22,45 +22,113 @@ pub unsafe extern "C" fn tun2proxy_run_with_cli_args(cli_args: *const c_char, tu
+@@ -1,5 +1,11 @@
+ use crate::Args;
+-use std::os::raw::{c_char, c_int, c_ushort};
++use std::{
++    ffi::c_void,
++    os::raw::{c_char, c_int, c_ushort},
++};
++
++/// Called once the native packet loop has been fully initialized.
++pub type Tun2proxyReadyCallback = unsafe extern "C" fn(context: *mut c_void);
+ 
+ /// # Safety
+ /// Run the tun2proxy component with command line arguments
+@@ -10,57 +16,167 @@ use std::os::raw::{c_char, c_int, c_ushort};
+ /// - packet_information: Whether exists packet information in packet from TUN device
+ #[unsafe(no_mangle)]
+ pub unsafe extern "C" fn tun2proxy_run_with_cli_args(cli_args: *const c_char, tun_mtu: c_ushort, packet_information: bool) -> c_int {
+-    let Ok(cli_args) = unsafe { std::ffi::CStr::from_ptr(cli_args) }.to_str() else {
+-        log::error!("Failed to convert CLI arguments to string");
+-        return -5;
++    let args = match unsafe { parse_cli_args(cli_args) } {
++        Ok(args) => args,
++        Err(code) => return code,
+     };
+-    let Some(args) = shlex::split(cli_args) else {
+-        log::error!("Failed to split CLI arguments");
+-        return -6;
+-    };
+-    let args = <Args as ::clap::Parser>::parse_from(args);
      general_run_for_api(args, tun_mtu, packet_information)
  }
  
 -static TUN_QUIT: std::sync::Mutex<Option<tokio_util::sync::CancellationToken>> = std::sync::Mutex::new(None);
-+struct ActiveTunnel {
-+    generation: u64,
-+    shutdown_token: tokio_util::sync::CancellationToken,
++/// # Safety
++/// Run tun2proxy and invoke `ready_callback(ready_context)` once the packet
++/// loop is initialized. The caller must keep the context valid until either
++/// the callback fires or this function returns.
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn tun2proxy_run_with_cli_args_and_ready(
++    cli_args: *const c_char,
++    tun_mtu: c_ushort,
++    packet_information: bool,
++    ready_callback: Option<Tun2proxyReadyCallback>,
++    ready_context: *mut c_void,
++) -> c_int {
++    let args = match unsafe { parse_cli_args(cli_args) } {
++        Ok(args) => args,
++        Err(code) => return code,
++    };
++    let ready_callback = boxed_ready_callback(ready_callback, ready_context);
++    general_run_for_api_with_ready(args, tun_mtu, packet_information, ready_callback, false)
 +}
  
 -pub(crate) fn tun2proxy_stop_internal() -> c_int {
@@ -185,6 +299,33 @@ index 6377302..5b0275b 100644
 -        if let Some(shutdown_token) = lock.take() {
 -            shutdown_token.cancel();
 -            return 0;
++unsafe fn parse_cli_args(cli_args: *const c_char) -> Result<Args, c_int> {
++    let cli_args = unsafe { std::ffi::CStr::from_ptr(cli_args) }.to_str().map_err(|_| {
++        log::error!("Failed to convert CLI arguments to string");
++        -5
++    })?;
++    let args = shlex::split(cli_args).ok_or_else(|| {
++        log::error!("Failed to split CLI arguments");
++        -6
++    })?;
++    <Args as ::clap::Parser>::try_parse_from(args).map_err(|error| {
++        log::error!("Failed to parse CLI arguments: {error}");
++        -7
++    })
++}
++
++fn boxed_ready_callback(ready_callback: Option<Tun2proxyReadyCallback>, ready_context: *mut c_void) -> Option<Box<dyn FnOnce() + Send>> {
++    // Raw pointers are not Send. Preserve the opaque address as an integer
++    // while the callback crosses onto the Tokio worker thread.
++    let ready_context = ready_context as usize;
++    ready_callback.map(|callback| Box::new(move || unsafe { callback(ready_context as *mut c_void) }) as Box<dyn FnOnce() + Send>)
++}
++
++struct ActiveTunnel {
++    generation: u64,
++    shutdown_token: tokio_util::sync::CancellationToken,
++}
++
 +#[derive(Default)]
 +struct TunnelRegistry {
 +    next_generation: u64,
@@ -209,7 +350,7 @@ index 6377302..5b0275b 100644
      }
 +}
 +
-+fn register_tunnel() -> Result<TunnelRegistration, c_int> {
++fn register_tunnel(wait_for_cancelled_generation: bool) -> Result<TunnelRegistration, c_int> {
 +    let mut registry = TUN_QUIT.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 +    loop {
 +        match registry.active.as_ref() {
@@ -226,12 +367,16 @@ index 6377302..5b0275b 100644
 +                    shutdown_token,
 +                });
 +            }
-+            Some(active) if active.shutdown_token.is_cancelled() => {
++            Some(active) if active.shutdown_token.is_cancelled() && wait_for_cancelled_generation => {
 +                // A replacement service may arrive after STOP but before the
 +                // old runtime has finished unwinding. Wait for its ownership
 +                // guard instead of creating overlapping packet loops.
 +                registry = TUN_QUIT.1.wait(registry).unwrap_or_else(std::sync::PoisonError::into_inner);
 +            }
++            // A PacketTunnelProvider start must never wait indefinitely for a
++            // prior extension instance. Its caller can retry after the old
++            // generation finishes unwinding.
++            Some(active) if active.shutdown_token.is_cancelled() => return Err(-8),
 +            Some(_) => return Err(-1),
 +        }
 +    }
@@ -247,7 +392,7 @@ index 6377302..5b0275b 100644
  }
  
  pub fn general_run_for_api(args: Args, tun_mtu: u16, packet_information: bool) -> c_int {
-+    general_run_for_api_with_ready(args, tun_mtu, packet_information, None)
++    general_run_for_api_with_ready(args, tun_mtu, packet_information, None, true)
 +}
 +
 +pub(crate) fn general_run_for_api_with_ready(
@@ -255,6 +400,7 @@ index 6377302..5b0275b 100644
 +    tun_mtu: u16,
 +    packet_information: bool,
 +    ready_callback: Option<Box<dyn FnOnce() + Send>>,
++    wait_for_cancelled_generation: bool,
 +) -> c_int {
      log::set_max_level(args.verbosity.into());
      if let Err(err) = log::set_boxed_logger(Box::<crate::dump_logger::DumpLogger>::default()) {
@@ -264,7 +410,7 @@ index 6377302..5b0275b 100644
 -    let shutdown_token = tokio_util::sync::CancellationToken::new();
 -    if let Ok(mut lock) = TUN_QUIT.lock() {
 -        if lock.is_some() {
-+    let registration = match register_tunnel() {
++    let registration = match register_tunnel(wait_for_cancelled_generation) {
 +        Ok(registration) => registration,
 +        Err(code) => {
              log::error!("tun2proxy already started");
@@ -281,7 +427,7 @@ index 6377302..5b0275b 100644
  
 -    let Ok(rt) = tokio::runtime::Builder::new_multi_thread().enable_all().build() else {
 +    let mut runtime_builder = tokio::runtime::Builder::new_multi_thread();
-+    #[cfg(target_os = "android")]
++    #[cfg(any(target_os = "android", target_os = "ios"))]
 +    runtime_builder
 +        .worker_threads(2)
 +        .max_blocking_threads(1)
@@ -297,13 +443,13 @@ index 6377302..5b0275b 100644
 -        // when the tokio runtime is dropped.
 +        let ret = general_run_async_with_ready(args_clone, tun_mtu, packet_information, shutdown_token, ready_callback).await;
 +        // Standalone desktop processes use a last-resort exit timer. Android
-+        // embeds this library inside an app process, so exiting the process
-+        // after a normal VPN stop would be incorrect.
-+        #[cfg(not(target_os = "android"))]
++        // and iOS embed this library inside an app or extension process, so
++        // exiting the process after a normal VPN stop would be incorrect.
++        #[cfg(not(any(target_os = "android", target_os = "ios")))]
          let _h = std::thread::spawn(move || {
              // Delay some seconds then try to exit current process if not exited yet, normally this case should not happen
              std::thread::sleep(crate::FORCE_EXIT_TIMEOUT);
-@@ -70,7 +138,6 @@ pub fn general_run_for_api(args: Args, tun_mtu: u16, packet_information: bool) -
+@@ -70,7 +186,6 @@ pub fn general_run_for_api(args: Args, tun_mtu: u16, packet_information: bool) -
          tokio::time::sleep(std::time::Duration::from_micros(100)).await;
          ret
      });
@@ -311,7 +457,7 @@ index 6377302..5b0275b 100644
      let res = match res {
          Ok(sessions) => {
              log::debug!("tun2proxy exited normally, current session count: {sessions}");
-@@ -82,19 +149,25 @@ pub fn general_run_for_api(args: Args, tun_mtu: u16, packet_information: bool) -
+@@ -82,19 +197,25 @@ pub fn general_run_for_api(args: Args, tun_mtu: u16, packet_information: bool) -
          }
      };
  
@@ -341,7 +487,7 @@ index 6377302..5b0275b 100644
  ) -> std::io::Result<usize> {
      let mut tun_config = tun::Configuration::default();
  
-@@ -186,7 +259,13 @@ pub async fn general_run_async(
+@@ -186,7 +307,13 @@ pub async fn general_run_async(
          }
      }
  
@@ -356,34 +502,70 @@ index 6377302..5b0275b 100644
  
      match join_handle.await? {
          Ok(sessions) => {
-@@ -211,3 +290,40 @@ pub async fn general_run_async(
+@@ -211,3 +338,76 @@ pub async fn general_run_async(
  pub unsafe extern "C" fn tun2proxy_stop() -> c_int {
      tun2proxy_stop_internal()
  }
 +
 +#[cfg(test)]
 +mod drover_registry_tests {
-+    use super::{register_tunnel, tun2proxy_stop_internal};
-+    use std::{sync::mpsc, time::Duration};
++    use super::{boxed_ready_callback, register_tunnel, tun2proxy_stop_internal};
++    use std::{
++        ffi::c_void,
++        sync::{
++            atomic::{AtomicUsize, Ordering},
++            mpsc,
++        },
++        time::Duration,
++    };
++
++    static READY_CONTEXT: AtomicUsize = AtomicUsize::new(0);
++    static REGISTRY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
++
++    unsafe extern "C" fn record_ready_context(context: *mut c_void) {
++        READY_CONTEXT.store(context as usize, Ordering::SeqCst);
++    }
++
++    #[test]
++    fn drover_tests_c_ready_callback_preserves_context() {
++        let expected = 0x5a17_usize;
++        READY_CONTEXT.store(0, Ordering::SeqCst);
++        let callback = boxed_ready_callback(Some(record_ready_context), expected as *mut c_void).expect("callback should be wrapped");
++
++        callback();
++
++        assert_eq!(READY_CONTEXT.load(Ordering::SeqCst), expected);
++    }
 +
 +    #[test]
 +    fn drover_tests_live_generation_rejects_an_overlap() {
-+        let first = register_tunnel().expect("first tunnel should register");
-+        assert!(matches!(register_tunnel(), Err(-1)));
++        let _serial = REGISTRY_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
++        let first = register_tunnel(true).expect("first tunnel should register");
++        assert!(matches!(register_tunnel(true), Err(-1)));
 +        drop(first);
 +
-+        let replacement = register_tunnel().expect("slot should clear with its owner");
++        let replacement = register_tunnel(true).expect("slot should clear with its owner");
 +        drop(replacement);
 +    }
 +
 +    #[test]
++    fn drover_tests_nonblocking_registration_rejects_a_draining_generation() {
++        let _serial = REGISTRY_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
++        let first = register_tunnel(true).expect("first tunnel should register");
++        assert_eq!(tun2proxy_stop_internal(), 0);
++        assert!(matches!(register_tunnel(false), Err(-8)));
++        drop(first);
++    }
++
++    #[test]
 +    fn drover_tests_cancelled_generation_owns_slot_until_drop() {
-+        let first = register_tunnel().expect("first tunnel should register");
++        let _serial = REGISTRY_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
++        let first = register_tunnel(true).expect("first tunnel should register");
 +        assert_eq!(tun2proxy_stop_internal(), 0);
 +
 +        let (registered_tx, registered_rx) = mpsc::channel();
 +        let waiter = std::thread::spawn(move || {
-+            let replacement = register_tunnel().expect("replacement should eventually register");
++            let replacement = register_tunnel(true).expect("replacement should eventually register");
 +            registered_tx.send(replacement.generation).unwrap();
 +            replacement
 +        });
@@ -397,8 +579,153 @@ index 6377302..5b0275b 100644
 +        drop(waiter.join().unwrap());
 +    }
 +}
+diff --git a/src/lab_trace.rs b/src/lab_trace.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..01e85f8181ec045a213b189b918e6233e5795467
+--- /dev/null
++++ b/src/lab_trace.rs
+@@ -0,0 +1,139 @@
++use crate::{args::DroverStrategy, session_info::SessionInfo};
++use std::{
++    fs::{File, create_dir_all},
++    io::{BufWriter, Write},
++    path::Path,
++    sync::{
++        Mutex,
++        atomic::{AtomicU64, Ordering},
++    },
++    time::Instant,
++};
++
++const MAX_TRACE_BYTES: usize = 1024 * 1024;
++const FLUSH_EVERY_LINES: usize = 16;
++pub(crate) const MAX_PACKET_EVENTS_PER_DIRECTION: usize = 32;
++
++struct TraceWriter {
++    file: BufWriter<File>,
++    bytes_written: usize,
++    pending_lines: usize,
++}
++
++/// A bounded diagnostic trace for the Drover lab builds.
++///
++/// It intentionally records only timing, transport metadata, endpoints, and
++/// packet lengths. Packet payloads and DNS question names never enter this
++/// writer. Keeping the format as JSON Lines makes a partial trace useful even
++/// if the extension or Android service is stopped abruptly.
++pub(crate) struct LabTrace {
++    started: Instant,
++    next_session_id: AtomicU64,
++    writer: Mutex<TraceWriter>,
++}
++
++impl LabTrace {
++    pub(crate) fn create(path: &Path, strategy: DroverStrategy) -> std::io::Result<Self> {
++        if let Some(parent) = path.parent() {
++            create_dir_all(parent)?;
++        }
++        let file = File::create(path)?;
++        let trace = Self {
++            started: Instant::now(),
++            next_session_id: AtomicU64::new(1),
++            writer: Mutex::new(TraceWriter {
++                file: BufWriter::new(file),
++                bytes_written: 0,
++                pending_lines: 0,
++            }),
++        };
++        trace.write_line(format!(
++            "{{\"schema\":1,\"event\":\"start\",\"t_ms\":0,\"strategy\":\"{strategy}\",\"payload_captured\":false}}"
++        ));
++        Ok(trace)
++    }
++
++    pub(crate) fn begin_session(&self, session: SessionInfo) -> u64 {
++        let id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
++        let family = if session.dst.is_ipv4() { 4 } else { 6 };
++        let protocol = session.protocol.to_string().to_ascii_lowercase();
++        self.write_line(format!(
++            "{{\"schema\":1,\"event\":\"session\",\"t_ms\":{},\"id\":{id},\"protocol\":\"{protocol}\",\"ip_version\":{family},\"destination\":\"{}\",\"port\":{}}}",
++            self.elapsed_ms(),
++            session.dst.ip(),
++            session.dst.port(),
++        ));
++        id
++    }
++
++    pub(crate) fn packet(&self, session_id: u64, direction: &'static str, index: usize, length: usize, modified: bool) {
++        if index >= MAX_PACKET_EVENTS_PER_DIRECTION {
++            return;
++        }
++        self.write_line(format!(
++            "{{\"schema\":1,\"event\":\"packet\",\"t_ms\":{},\"id\":{session_id},\"direction\":\"{direction}\",\"index\":{},\"length\":{length},\"modified\":{modified}}}",
++            self.elapsed_ms(),
++            index + 1,
++        ));
++    }
++
++    fn elapsed_ms(&self) -> u128 {
++        self.started.elapsed().as_millis()
++    }
++
++    fn write_line(&self, line: String) {
++        let Ok(mut writer) = self.writer.lock() else {
++            return;
++        };
++        let required = line.len().saturating_add(1);
++        if writer.bytes_written.saturating_add(required) > MAX_TRACE_BYTES {
++            return;
++        }
++        if writeln!(writer.file, "{line}").is_err() {
++            return;
++        }
++        writer.bytes_written += required;
++        writer.pending_lines += 1;
++        if writer.pending_lines >= FLUSH_EVERY_LINES && writer.file.flush().is_ok() {
++            writer.pending_lines = 0;
++        }
++    }
++}
++
++impl Drop for LabTrace {
++    fn drop(&mut self) {
++        // Clean VPN shutdowns flush the final partial batch. Batching avoids a
++        // synchronous filesystem flush for every early call packet, which
++        // would otherwise perturb the timing this lab is trying to observe.
++        if let Ok(writer) = self.writer.get_mut() {
++            let _ = writer.file.flush();
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::session_info::IpProtocol;
++    use std::{fs, net::SocketAddr};
++
++    #[test]
++    fn trace_contains_metadata_but_never_payload() {
++        let path = std::env::temp_dir().join(format!("drover-lab-trace-{}.jsonl", std::process::id()));
++        let trace = LabTrace::create(&path, DroverStrategy::None).unwrap();
++        let session = SessionInfo::new(
++            "10.77.0.1:40000".parse::<SocketAddr>().unwrap(),
++            "203.0.113.7:3478".parse::<SocketAddr>().unwrap(),
++            IpProtocol::Udp,
++        );
++        let id = trace.begin_session(session);
++        trace.packet(id, "up", 0, 123, false);
++        drop(trace);
++
++        let contents = fs::read_to_string(&path).unwrap();
++        let _ = fs::remove_file(path);
++        assert!(contents.contains("\"destination\":\"203.0.113.7\""));
++        assert!(contents.contains("\"length\":123"));
++        assert!(contents.contains("\"payload_captured\":false"));
++    }
++}
 diff --git a/src/lib.rs b/src/lib.rs
-index 2cab17f..77e24c5 100644
+index 2cab17f1a8b54425a4e74d0ff7fc8199ab5b7fb8..e8ceb56038c84439c9911deaca406777d1d5a5c3 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -1,11 +1,12 @@
@@ -439,16 +766,17 @@ index 2cab17f..77e24c5 100644
  
  pub use {
 -    args::{ArgDns, ArgProxy, ArgVerbosity, Args, ProxyType},
-+    args::{ArgDns, ArgProxy, ArgVerbosity, Args, ProxyType, UserKey},
++    args::{ArgDns, ArgProxy, ArgVerbosity, Args, DroverStrategy, ProxyType, UserKey},
      error::{BoxError, Error, Result},
      traffic_status::{TrafficStatus, tun2proxy_set_traffic_status_callback},
  };
-@@ -52,11 +54,13 @@ mod dns;
+@@ -52,11 +54,14 @@ mod dns;
  mod dump_logger;
  mod error;
  mod general_api;
 +#[cfg(feature = "proxy")]
  mod http;
++mod lab_trace;
  mod no_proxy;
  mod proxy_handler;
  mod session_info;
@@ -457,7 +785,7 @@ index 2cab17f..77e24c5 100644
  mod socks;
  mod traffic_status;
  #[cfg(feature = "udpgw")]
-@@ -67,6 +71,50 @@ pub mod win_svc;
+@@ -67,6 +72,50 @@ pub mod win_svc;
  
  const DNS_PORT: u16 = 53;
  
@@ -508,7 +836,7 @@ index 2cab17f..77e24c5 100644
  #[allow(unused)]
  #[derive(Hash, Copy, Clone, Eq, PartialEq, Debug)]
  #[cfg_attr(
-@@ -196,13 +244,28 @@ async fn create_udp_stream(socket_queue: &Option<Arc<SocketQueue>>, peer: Socket
+@@ -196,13 +245,33 @@ async fn create_udp_stream(socket_queue: &Option<Arc<SocketQueue>>, peer: Socket
  /// # Returns
  /// * The number of sessions while exiting
  pub async fn run<D>(device: D, mtu: u16, args: Args, shutdown_token: CancellationToken) -> crate::Result<usize>
@@ -531,13 +859,18 @@ index 2cab17f..77e24c5 100644
      log::info!("{} {} starting...", env!("CARGO_PKG_NAME"), version_info!());
      log::info!("Proxy {} server: {}", args.proxy.proxy_type, args.proxy.addr);
  
++    let lab_trace = match args.lab_trace_file.as_deref() {
++        Some(path) => Some(Arc::new(lab_trace::LabTrace::create(path, args.drover_strategy)?)),
++        None => None,
++    };
++
 +    #[cfg(feature = "proxy")]
      let server_addr = args.proxy.addr;
 +    #[cfg(feature = "proxy")]
      let key = args.proxy.credentials.clone();
      let dns_addr = args.dns_addr;
      let ipv6_enabled = args.ipv6_enabled;
-@@ -228,14 +291,20 @@ where
+@@ -228,14 +297,20 @@ where
      #[cfg(not(target_os = "linux"))]
      let socket_queue = None;
  
@@ -561,7 +894,7 @@ index 2cab17f..77e24c5 100644
      let mut ipstack_config = ipstack::IpStackConfig::default();
      ipstack_config.mtu(mtu)?;
      let mut tcp_cfg = ipstack::TcpConfig::default();
-@@ -270,8 +339,18 @@ where
+@@ -270,16 +345,33 @@ where
      });
  
      let task_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -580,7 +913,9 @@ index 2cab17f..77e24c5 100644
      loop {
          let task_count = task_count.clone();
          let virtual_dns = virtual_dns.clone();
-@@ -280,6 +359,12 @@ where
++        let lab_trace = lab_trace.clone();
+         let ip_stack_stream = tokio::select! {
+             _ = shutdown_token.cancelled() => {
                  log::info!("Shutdown received");
                  break;
              }
@@ -593,7 +928,17 @@ index 2cab17f..77e24c5 100644
              ip_stack_stream = ip_stack.accept() => {
                  ip_stack_stream?
              }
-@@ -307,7 +392,7 @@ where
+@@ -298,6 +390,9 @@ where
+                 let count = task_count.fetch_add(1, Relaxed).saturating_add(1);
+                 log::trace!("Session count {count}");
+                 let info = SessionInfo::new(tcp.local_addr(), tcp.peer_addr(), IpProtocol::Tcp);
++                if let Some(trace) = &lab_trace {
++                    trace.begin_session(info);
++                }
+                 let domain_name = if let Some(virtual_dns) = &virtual_dns {
+                     let mut virtual_dns = virtual_dns.lock().await;
+                     virtual_dns.touch_ip(&tcp.peer_addr().ip());
+@@ -307,7 +402,7 @@ where
                  };
                  let proxy_handler = mgr.new_proxy_handler(info, domain_name, false).await?;
                  let socket_queue = socket_queue.clone();
@@ -602,18 +947,21 @@ index 2cab17f..77e24c5 100644
                      if let Err(err) = handle_tcp_session(tcp, proxy_handler, socket_queue).await {
                          log::error!("{info} error \"{err}\"");
                      }
-@@ -327,6 +412,10 @@ where
+@@ -327,15 +422,20 @@ where
                  let count = task_count.fetch_add(1, Relaxed).saturating_add(1);
                  log::trace!("Session count {count}");
                  let mut info = SessionInfo::new(udp.local_addr(), udp.peer_addr(), IpProtocol::Udp);
++                let lab_session_id = lab_trace.as_ref().map(|trace| trace.begin_session(info));
 +                // Claim in packet-accept order, before spawned handlers can
 +                // race. ipstack creates a session per destination even when
 +                // Discord uses one source socket for all of them.
 +                let drover_first_send_for_source = drover_udp_tracker.claim(info.src).await;
                  if info.dst.port() == DNS_PORT {
-                     if is_private_ip(info.dst.ip()) {
+-                    if is_private_ip(info.dst.ip()) {
++                    if should_rewrite_dns_destination(args.drover_strategy, info.dst) {
                          info.dst.set_ip(dns_addr); // !!! Here we change the destination address to remote DNS server!!!
-@@ -335,7 +424,7 @@ where
+                     }
+                     if args.dns == ArgDns::OverTcp {
                          info.protocol = IpProtocol::Tcp;
                          let proxy_handler = mgr.new_proxy_handler(info, None, false).await?;
                          let socket_queue = socket_queue.clone();
@@ -622,7 +970,7 @@ index 2cab17f..77e24c5 100644
                              if let Err(err) = handle_dns_over_tcp_session(udp, proxy_handler, socket_queue, ipv6_enabled).await {
                                  log::error!("{info} error \"{err}\"");
                              }
-@@ -345,7 +434,7 @@ where
+@@ -345,7 +445,7 @@ where
                          continue;
                      }
                      if args.dns == ArgDns::Virtual {
@@ -631,7 +979,7 @@ index 2cab17f..77e24c5 100644
                              if let Some(virtual_dns) = virtual_dns {
                                  if let Err(err) = handle_virtual_dns_session(udp, virtual_dns).await {
                                      log::error!("{info} error \"{err}\"");
-@@ -374,7 +463,7 @@ where
+@@ -374,7 +474,7 @@ where
                      let tcpinfo = SessionInfo::new(tcp_src, udpgw.get_udpgw_server_addr(), IpProtocol::Tcp);
                      let proxy_handler = mgr.new_proxy_handler(tcpinfo, None, false).await?;
                      let queue = socket_queue.clone();
@@ -640,12 +988,14 @@ index 2cab17f..77e24c5 100644
                          let dst = info.dst; // real UDP destination address
                          let dst_addr = match domain_name {
                              Some(ref d) => socks5_impl::protocol::Address::from((d.clone(), dst.port())),
-@@ -391,9 +480,20 @@ where
+@@ -391,9 +491,25 @@ where
                  match mgr.new_proxy_handler(info, domain_name, true).await {
                      Ok(proxy_handler) => {
                          let socket_queue = socket_queue.clone();
 -                        tokio::spawn(async move {
 +                        let drover_udp_tracker = drover_udp_tracker.clone();
++                        let drover_strategy = args.drover_strategy;
++                        let lab_trace = lab_trace.clone();
 +                        session_tasks.spawn(async move {
                              let ty = args.proxy.proxy_type;
 -                            if let Err(err) = handle_udp_associate_session(udp, ty, proxy_handler, socket_queue, ipv6_enabled).await {
@@ -657,13 +1007,16 @@ index 2cab17f..77e24c5 100644
 +                                ipv6_enabled,
 +                                drover_first_send_for_source,
 +                                drover_udp_tracker,
++                                drover_strategy,
++                                lab_trace,
++                                lab_session_id,
 +                            )
 +                            .await
 +                            {
                                  log::info!("Ending {info} with \"{err}\"");
                              }
                              let count = task_count.fetch_sub(1, Relaxed).saturating_sub(1);
-@@ -416,7 +516,11 @@ where
+@@ -416,7 +532,11 @@ where
              }
          }
      }
@@ -676,7 +1029,7 @@ index 2cab17f..77e24c5 100644
  }
  
  #[cfg(all(test, target_os = "linux"))]
-@@ -456,6 +560,7 @@ async fn handle_virtual_dns_session(mut udp: IpStackUdpStream, dns: Arc<Mutex<Vi
+@@ -456,6 +576,7 @@ async fn handle_virtual_dns_session(mut udp: IpStackUdpStream, dns: Arc<Mutex<Vi
      Ok(())
  }
  
@@ -684,7 +1037,7 @@ index 2cab17f..77e24c5 100644
  async fn copy_and_record_traffic<R, W>(reader: &mut R, writer: &mut W, is_tx: bool) -> tokio::io::Result<u64>
  where
      R: tokio::io::AsyncRead + Unpin + ?Sized,
-@@ -479,6 +584,15 @@ where
+@@ -479,6 +600,15 @@ where
      Ok(total)
  }
  
@@ -700,7 +1053,7 @@ index 2cab17f..77e24c5 100644
  async fn handle_tcp_session(
      mut tcp_stack: IpStackTcpStream,
      proxy_handler: Arc<Mutex<dyn ProxyHandler>>,
-@@ -645,16 +759,33 @@ async fn handle_udp_gateway_session(
+@@ -645,16 +775,54 @@ async fn handle_udp_gateway_session(
      Ok(())
  }
  
@@ -718,6 +1071,24 @@ index 2cab17f..77e24c5 100644
 +    udp_server.write_all(payload).await
 +}
 +
++fn should_apply_drover_preamble(
++    strategy: DroverStrategy,
++    proxy_type: ProxyType,
++    destination_port: u16,
++    first_send_for_source: bool,
++    payload_len: usize,
++) -> bool {
++    strategy == DroverStrategy::Discord
++        && !matches!(proxy_type, ProxyType::Socks4 | ProxyType::Socks5)
++        && destination_port != DNS_PORT
++        && first_send_for_source
++        && payload_len == 74
++}
++
++fn should_rewrite_dns_destination(strategy: DroverStrategy, destination: SocketAddr) -> bool {
++    strategy == DroverStrategy::Discord && destination.port() == DNS_PORT && is_private_ip(destination.ip())
++}
++
  async fn handle_udp_associate_session(
      mut udp_stack: IpStackUdpStream,
      proxy_type: ProxyType,
@@ -727,6 +1098,9 @@ index 2cab17f..77e24c5 100644
 +    _ipv6_enabled: bool,
 +    mut drover_first_send_for_source: bool,
 +    drover_udp_tracker: Arc<DroverUdpTracker>,
++    drover_strategy: DroverStrategy,
++    lab_trace: Option<Arc<lab_trace::LabTrace>>,
++    lab_session_id: Option<u64>,
  ) -> crate::Result<()> {
 +    #[cfg(feature = "proxy")]
      use socks5_impl::protocol::{Address, StreamOperation, UdpHeader};
@@ -736,11 +1110,13 @@ index 2cab17f..77e24c5 100644
          let handler = proxy_handler.lock().await;
          (
              handler.get_session_info(),
-@@ -681,6 +812,11 @@ async fn handle_udp_associate_session(
+@@ -681,6 +849,13 @@ async fn handle_udp_associate_session(
  
      let mut buf1 = [0_u8; 4096];
      let mut buf2 = [0_u8; 4096];
 +    let mut drover_next_source_refresh = drover_udp_tracker.next_refresh_deadline();
++    let mut uplink_trace_index = 0_usize;
++    let mut downlink_trace_index = 0_usize;
 +    // Discord starts a voice UDP flow with a 74-byte IP discovery packet.
 +    // discord-drover sends two one-byte datagrams before that first packet;
 +    // reproducing the same sequence here lets the Android VPN companion apply
@@ -748,7 +1124,7 @@ index 2cab17f..77e24c5 100644
      loop {
          tokio::select! {
              len = udp_stack.read(&mut buf1) => {
-@@ -692,8 +828,20 @@ async fn handle_udp_associate_session(
+@@ -692,8 +867,28 @@ async fn handle_udp_associate_session(
  
                  crate::traffic_status::traffic_status_update(len, 0)?;
  
@@ -758,10 +1134,18 @@ index 2cab17f..77e24c5 100644
 +                drover_udp_tracker
 +                    .touch_if_due(session_info.src, &mut drover_next_source_refresh)
 +                    .await;
-+                let apply_drover_preamble = !matches!(proxy_type, ProxyType::Socks4 | ProxyType::Socks5)
-+                    && session_info.dst.port() != DNS_PORT
-+                    && is_first_send
-+                    && buf1.len() == 74;
++                let apply_drover_preamble = should_apply_drover_preamble(
++                    drover_strategy,
++                    proxy_type,
++                    session_info.dst.port(),
++                    is_first_send,
++                    buf1.len(),
++                );
++
++                if let (Some(trace), Some(id)) = (&lab_trace, lab_session_id) {
++                    trace.packet(id, "up", uplink_trace_index, buf1.len(), apply_drover_preamble);
++                }
++                uplink_trace_index = uplink_trace_index.saturating_add(1);
 +
 +                #[cfg(feature = "proxy")]
                  if let ProxyType::Socks4 | ProxyType::Socks5 = proxy_type {
@@ -770,7 +1154,7 @@ index 2cab17f..77e24c5 100644
                          Address::DomainAddress(domain_name.clone().into(), session_info.dst.port())
                      } else {
                          session_info.dst.into()
-@@ -706,8 +854,14 @@ async fn handle_udp_associate_session(
+@@ -706,8 +901,14 @@ async fn handle_udp_associate_session(
  
                      udp_server.write_all(&s5_udp_data).await?;
                  } else {
@@ -786,15 +1170,20 @@ index 2cab17f..77e24c5 100644
              }
              len = udp_server.read(&mut buf2) => {
                  let len = len?;
-@@ -718,6 +872,7 @@ async fn handle_udp_associate_session(
+@@ -718,6 +919,12 @@ async fn handle_udp_associate_session(
  
                  crate::traffic_status::traffic_status_update(0, len)?;
  
++                if let (Some(trace), Some(id)) = (&lab_trace, lab_session_id) {
++                    trace.packet(id, "down", downlink_trace_index, buf2.len(), false);
++                }
++                downlink_trace_index = downlink_trace_index.saturating_add(1);
++
 +                #[cfg(feature = "proxy")]
                  if let ProxyType::Socks4 | ProxyType::Socks5 = proxy_type {
                      // Remove SOCKS5 UDP header from the server data
                      let header = UdpHeader::retrieve_from_stream(&mut &buf2[..])?;
-@@ -725,7 +880,7 @@ async fn handle_udp_associate_session(
+@@ -725,7 +932,7 @@ async fn handle_udp_associate_session(
  
                      let buf = if session_info.dst.port() == DNS_PORT {
                          let mut message = dns::parse_data_to_dns_message(data, false)?;
@@ -803,7 +1192,7 @@ index 2cab17f..77e24c5 100644
                              dns::remove_ipv6_entries(&mut message);
                          }
                          message.to_vec()?
-@@ -737,6 +892,9 @@ async fn handle_udp_associate_session(
+@@ -737,6 +944,9 @@ async fn handle_udp_associate_session(
                  } else {
                      udp_stack.write_all(buf2).await?;
                  }
@@ -813,7 +1202,7 @@ index 2cab17f..77e24c5 100644
              }
          }
      }
-@@ -888,3 +1046,133 @@ async fn handle_proxy_session(server: &mut TcpStream, proxy_handler: Arc<Mutex<d
+@@ -888,3 +1098,181 @@ async fn handle_proxy_session(server: &mut TcpStream, proxy_handler: Arc<Mutex<d
      crate::traffic_status::traffic_status_update(tx, rx)?;
      Ok(proxy_handler.get_udp_associate())
  }
@@ -912,6 +1301,54 @@ index 2cab17f..77e24c5 100644
 +        assert_eq!(writer.attempts, vec![vec![0], vec![1], payload.to_vec()]);
 +    }
 +
++    #[test]
++    fn observe_strategy_never_applies_discord_preamble() {
++        assert!(!should_apply_drover_preamble(DroverStrategy::None, ProxyType::None, 3478, true, 74,));
++    }
++
++    #[test]
++    fn observe_strategy_preserves_private_dns_destination() {
++        let destination: SocketAddr = "192.168.1.1:53".parse().unwrap();
++        assert!(!should_rewrite_dns_destination(DroverStrategy::None, destination));
++    }
++
++    #[test]
++    fn discord_strategy_rewrites_private_dns_destination() {
++        let destination: SocketAddr = "192.168.1.1:53".parse().unwrap();
++        assert!(should_rewrite_dns_destination(DroverStrategy::Discord, destination));
++    }
++
++    #[test]
++    fn discord_strategy_preserves_public_dns_destination() {
++        let destination: SocketAddr = "8.8.8.8:53".parse().unwrap();
++        assert!(!should_rewrite_dns_destination(DroverStrategy::Discord, destination));
++    }
++
++    #[test]
++    fn discord_strategy_stays_narrow() {
++        assert!(should_apply_drover_preamble(
++            DroverStrategy::Discord,
++            ProxyType::None,
++            50000,
++            true,
++            74,
++        ));
++        assert!(!should_apply_drover_preamble(
++            DroverStrategy::Discord,
++            ProxyType::None,
++            DNS_PORT,
++            true,
++            74,
++        ));
++        assert!(!should_apply_drover_preamble(
++            DroverStrategy::Discord,
++            ProxyType::None,
++            50000,
++            false,
++            74,
++        ));
++    }
++
 +    #[tokio::test]
 +    async fn udp_source_is_claimed_once_until_idle_timeout() {
 +        let source: SocketAddr = "10.77.0.1:40000".parse().unwrap();
@@ -948,7 +1385,7 @@ index 2cab17f..77e24c5 100644
 +    }
 +}
 diff --git a/src/traffic_status.rs b/src/traffic_status.rs
-index 9f32b7c..5737aa9 100644
+index 9f32b7c3b798e17611a3a89fc73176741f983a71..5737aa904c7083510f6b2c4d6cac4de29a6c51de 100644
 --- a/src/traffic_status.rs
 +++ b/src/traffic_status.rs
 @@ -1,11 +1,15 @@

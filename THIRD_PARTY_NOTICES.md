@@ -27,22 +27,22 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-The bundled Android native binaries are built in direct-only mode with Cargo's
+The bundled Android and Apple native binaries are built in direct-only mode with Cargo's
 `--no-default-features` option. It does not contain tun2proxy's optional
 SOCKS/HTTP proxy implementation or the GPL-licensed `socks5-impl` dependency.
 
 The native binary also includes permissively licensed Rust dependencies from
 the pinned upstream revision. Their exact versions are fixed by the
 accompanying `native/Cargo.lock` file. `DEPENDENCY_LICENSES.md` records the
-172-node audited cross-host direct-build notice set and each package's declared
-license expression. This deliberately includes five Windows-only build nodes
-that are absent on the Linux release runner, so both supported build hosts are
-covered.
+173-node audited cross-host/cross-target direct-build notice set and each
+package's declared license expression. This deliberately includes five
+Windows-only build nodes and the Apple-only `core-foundation-sys` node, so both
+mobile targets and supported build hosts are covered.
 
 The complete license, notice, copying, and copyright text preserved from that
-locked graph is bundled in both APKs as
-`assets/third_party_licenses.txt`. Users can read it without network access by
-opening **Open-source licenses** in the app. The release workflow regenerates
+locked graph is bundled in both APKs and the iOS host app as
+`third_party_licenses.txt`. Users can read it without network access by opening
+**Open-source licenses** in the app. The release workflow regenerates
 the bundle from the patched, locked source and fails if the checked-in asset or
 either APK differs. The generator's few reviewed overrides cover published
 crate archives that declare a license but omit their repository-level license

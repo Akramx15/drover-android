@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>PayloadDescription</key>
+			<string>Development-only per-app mapping for the Drover WhatsApp lab.</string>
+			<key>PayloadDisplayName</key>
+			<string>Drover WhatsApp Lab VPN</string>
+			<key>PayloadIdentifier</key>
+			<string>app.drover.ios.lab.profile.vpn</string>
+			<key>PayloadOrganization</key>
+			<string>Drover Lab</string>
+			<key>PayloadType</key>
+			<string>com.apple.vpn.managed.applayer</string>
+			<key>PayloadUUID</key>
+			<string>AD2A73E3-20E3-4ED4-A246-904833349ED8</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+			<key>UserDefinedName</key>
+			<string>Drover WhatsApp Lab</string>
+			<key>VPNType</key>
+			<string>VPN</string>
+			<key>VPNSubType</key>
+			<string>app.drover.ios.lab</string>
+			<key>VPNUUID</key>
+			<string>1D4D3F5C-8948-4B6D-9D3C-62C9C22E181B</string>
+			<key>OnDemandEnabled</key>
+			<integer>0</integer>
+			<key>OnDemandMatchAppEnabled</key>
+			<false/>
+			<key>VPN</key>
+			<dict>
+				<key>AuthenticationMethod</key>
+				<string>Password</string>
+				<key>AuthName</key>
+				<string></string>
+				<key>AuthPassword</key>
+				<string></string>
+				<key>ProviderBundleIdentifier</key>
+				<string>app.drover.ios.lab.PacketTunnel</string>
+				<key>ProviderType</key>
+				<string>packet-tunnel</string>
+				<key>RemoteAddress</key>
+				<string>127.0.0.1</string>
+			</dict>
+			<key>VendorConfig</key>
+			<dict>
+				<key>droverStrategy</key>
+				<string>none</string>
+			</dict>
+		</dict>
+	</array>
+	<key>PayloadDescription</key>
+	<string>Maps WhatsApp Messenger and WhatsApp Business to a development-signed Drover packet tunnel. Do not distribute this profile.</string>
+	<key>PayloadDisplayName</key>
+	<string>Drover WhatsApp Lab</string>
+	<key>PayloadIdentifier</key>
+	<string>app.drover.ios.lab.profile</string>
+	<key>PayloadOrganization</key>
+	<string>Drover Lab</string>
+	<key>PayloadRemovalDisallowed</key>
+	<false/>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>7926E368-8234-416C-9972-21D9B72159B3</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+</dict>
+</plist>

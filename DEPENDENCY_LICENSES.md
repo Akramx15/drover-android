@@ -1,16 +1,27 @@
-# tun2proxy Android direct-only dependency licenses
+# tun2proxy Android and Apple direct-only dependency licenses
 
-Generated locally on 2026-09-04 from the sibling tun2proxy checkout's Cargo.toml and Cargo.lock. The resolved scope is the aarch64-linux-android target with default features disabled and Cargo normal plus build edges:
+Generated from the pinned tun2proxy Cargo.toml and Cargo.lock. The resolved
+scope is the union of the Android ARM64 and Apple ARM64 direct-only targets,
+with default features disabled and Cargo normal plus build edges:
 
 ~~~text
 cargo tree --target aarch64-linux-android --no-default-features --locked -e normal,build
+cargo tree --target aarch64-apple-ios --no-default-features --locked -e normal,build
 ~~~
 
-The inventory was resolved with Cargo 1.97.1 on the supported x86_64-pc-windows-msvc build host. It deliberately forms a cross-host notice superset: Linux release runners omit the five Windows-only build nodes, while every package used by either supported build host remains covered. It excludes dev dependencies, target-inapplicable runtime packages, and disabled optional features. Of the 171 third-party artifacts, 170 resolve from the crates.io registry and `ipstack` resolves from one exact upstream Git commit containing its non-blocking TCP-drop fix; there are no floating Git branches or additional path dependencies. The final column uses Cargo's declared repository, falling back to the declared homepage for udp-stream.
+The inventory deliberately forms a cross-host and cross-target notice superset:
+Linux release runners omit five Windows-only build nodes, and Android omits the
+Apple-only `core-foundation-sys` node, while every package shipped by either
+mobile target remains covered. It excludes dev dependencies and disabled
+optional features. Of the 172 third-party artifacts, 171 resolve from crates.io
+and `ipstack` resolves from one exact upstream Git commit containing its
+non-blocking TCP-drop fix; there are no floating Git branches or additional path
+dependencies. The final column uses Cargo's declared repository, falling back
+to the declared homepage for udp-stream.
 
 - Manifest SHA-256: 84E0DDA734FD120E84E31795ED28D5F32DDFEFF51FF02F8B13778069C25B4DF5
 - Lockfile SHA-256: 2118CE7F648CEB7B9040A0C86120942818ECDEBDBC7081BCE81B31C89DFE791E
-- Resolved package/version nodes: 172 total (tun2proxy plus 171 third-party nodes)
+- Resolved package/version nodes: 173 total (tun2proxy plus 172 third-party nodes)
 - Unknown license entries: none
 - Copyleft license entries: none
 - socks5-impl 0.9.6 (GPL-3.0-or-later) is not in this direct-only graph.
@@ -45,6 +56,7 @@ The inventory was resolved with Cargo 1.97.1 on the supported x86_64-pc-windows-
 | clap_lex | 1.1.0 | MIT OR Apache-2.0 | https://github.com/clap-rs/clap |
 | colorchoice | 1.0.5 | MIT OR Apache-2.0 | https://github.com/rust-cli/anstyle.git |
 | combine | 4.6.8 | MIT | https://github.com/Marwes/combine |
+| core-foundation-sys | 0.8.7 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | critical-section | 1.2.0 | MIT OR Apache-2.0 | https://github.com/rust-embedded/critical-section |
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |

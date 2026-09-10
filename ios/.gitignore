@@ -1,0 +1,12 @@
+DroverLab.xcodeproj/
+DerivedData/
+Generated/
+Config/Signing.local.xcconfig
+Config/WhatsAppPerAppVPN.mobileconfig
+*.xcarchive
+*.ipa
+*.mobileprovision
+*.p12
+*.p8
+*.key
+*.pem
