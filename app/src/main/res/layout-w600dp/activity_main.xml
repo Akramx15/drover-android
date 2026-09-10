@@ -51,24 +51,38 @@
             android:orientation="vertical"
             android:padding="24dp">
 
-            <TextView
-                android:id="@+id/discord_status"
+            <Button
+                android:id="@+id/target_choice_button"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:background="@drawable/button_secondary"
+                android:backgroundTint="@null"
+                android:minHeight="48dp"
+                android:text="@string/change_target_button"
+                android:textAllCaps="false"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                tools:ignore="ButtonStyle" />
+
+            <TextView
+                android:id="@+id/app_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
                 android:gravity="center"
                 android:textColor="@color/text_secondary"
                 android:textSize="16sp"
-                tools:text="Discord Stable is selected" />
+                tools:text="WhatsApp Messenger is selected" />
 
             <Button
-                android:id="@+id/discord_choice_button"
+                android:id="@+id/app_choice_button"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
                 android:background="@drawable/button_secondary"
                 android:backgroundTint="@null"
                 android:minHeight="48dp"
-                android:text="@string/change_discord_button"
+                android:text="@string/change_app_button"
                 android:textAllCaps="false"
                 android:textColor="@color/text_primary"
                 android:textSize="15sp"
@@ -181,6 +195,31 @@
                 android:textAlignment="viewStart"
                 android:textColor="@color/text_secondary"
                 android:textSize="13sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:lineSpacingExtra="3dp"
+                android:text="@string/lab_trace_warning"
+                android:textAlignment="viewStart"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/export_trace_button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/button_secondary"
+                android:backgroundTint="@null"
+                android:minHeight="48dp"
+                android:text="@string/export_trace"
+                android:textAllCaps="false"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                tools:ignore="ButtonStyle" />
 
             <Button
                 android:id="@+id/licenses_button"

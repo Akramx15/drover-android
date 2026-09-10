@@ -1,0 +1,5 @@
+module tun2proxy {
+    umbrella header "tun2proxy.h"
+    export *
+    module * { export * }
+}

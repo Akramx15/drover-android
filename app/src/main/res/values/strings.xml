@@ -1,9 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Drover for Android</string>
-    <string name="title">Drover for Android</string>
-    <string name="subtitle">Local Discord voice compatibility for Android devices</string>
-    <string name="privacy_note">Runs only on your device. No server, account, analytics, or data collection.</string>
+    <string name="app_name">Drover Lab for Android</string>
+    <string name="title">Drover Lab for Android</string>
+    <string name="subtitle">Discord compatibility and an observe-only WhatsApp network lab</string>
+    <string name="privacy_note">The trace stays on this device unless you explicitly export it. Drover never uploads it.</string>
+
+    <string name="app_kind_discord">Discord</string>
+    <string name="app_kind_whatsapp">WhatsApp</string>
+    <string name="whatsapp_messenger">WhatsApp Messenger</string>
+    <string name="whatsapp_business">WhatsApp Business</string>
+    <string name="selected_target">App family: %1$s</string>
+    <string name="change_target_button">Choose app family</string>
+    <string name="app_selected">Selected: %1$s</string>
+    <string name="app_choose_required">More than one %1$s installation is available. Choose one to continue.</string>
+    <string name="app_missing">No supported %1$s installation was found.</string>
+    <string name="app_selection_missing">Choose an installed %1$s app before starting Drover.</string>
+    <string name="app_launch_failed">%1$s could not be opened. It may have been disabled or removed.</string>
+    <string name="choose_target_title">Choose app family</string>
+    <string name="choose_app_title">Choose %1$s installation</string>
+    <string name="choose_app_button">Choose installation</string>
+    <string name="change_app_button">Change installation</string>
 
     <string name="discord_stable">Discord Stable</string>
     <string name="discord_ptb">Discord PTB</string>
@@ -21,24 +37,35 @@
     <string name="status_starting">Starting…</string>
     <string name="status_restarting">Restarting…</string>
     <string name="status_running">Running — Discord is ready to open</string>
-    <string name="status_restart_required">The Discord selection changed — restart Drover to apply it</string>
+    <string name="status_running_app">Running — %1$s is ready to open</string>
+    <string name="status_restart_required">The selected app changed — restart Drover to apply it</string>
     <string name="status_stopping">Stopping…</string>
     <string name="status_error">Error: %1$s</string>
     <string name="start_and_open_discord">Start and open Discord</string>
     <string name="open_discord">Open Discord</string>
     <string name="restart_and_open_discord">Restart and open Discord</string>
+    <string name="start_and_open_app">Start and open %1$s</string>
+    <string name="open_app">Open %1$s</string>
+    <string name="restart_and_open_app">Restart and open %1$s</string>
     <string name="stop">Stop</string>
 
     <string name="auto_start_on_boot">Start Drover when this device starts</string>
+    <string name="auto_start_disabled_for_lab">Automatic start is disabled for WhatsApp observation</string>
     <string name="auto_start_summary">Off by default. Android starts the foreground VPN service after boot only after you grant VPN permission. Allow notifications to see setup alerts and the Stop action.</string>
     <string name="open_vpn_settings">Open Android VPN settings</string>
-    <string name="always_on_note">Always-on VPN is supported. Keep “Block connections without VPN” off because Drover routes only the selected Discord app.</string>
+    <string name="always_on_note">Always-on VPN is disabled in this lab build so endpoint metadata is never captured without an explicit start.</string>
     <string name="vpn_settings_unavailable">VPN settings are not available on this device.</string>
     <string name="open_source_licenses">Open-source licenses</string>
     <string name="close">Close</string>
     <string name="licenses_load_failed">Could not load license notices: %1$s</string>
 
-    <string name="how_it_works">Drover uses an on-device, per-app VPN for the selected Discord installation. TCP and UDP go directly to their destinations; no Drover server is used. The tunnel sleeps while there is no traffic, but any active VPN still uses some memory and power.</string>
+    <string name="how_it_works">Discord keeps its existing Drover compatibility strategy. WhatsApp and WhatsApp Business use observe-only mode: Drover adds no Discord preamble and does not intentionally alter application datagram payload bytes. This is still a userspace tunnel, so source ports and timing can change. It does not use a remote VPN server or hide your IP address.</string>
+    <string name="lab_trace_warning">Lab warning: the trace stores metadata only — time, protocol, destination IP address, port, and packet size. It never stores packet payloads, messages, audio, or microphone data. Stop Drover before exporting the trace.</string>
+    <string name="export_trace">Export latest WhatsApp metadata trace</string>
+    <string name="trace_not_ready">No completed trace is ready. Start Drover, reproduce the call attempt, then stop Drover before exporting.</string>
+    <string name="trace_export_unavailable">A document picker is not available on this device.</string>
+    <string name="trace_exported">The metadata trace was exported.</string>
+    <string name="trace_export_failed">The metadata trace could not be exported.</string>
     <string name="vpn_permission_denied">VPN permission was not granted.</string>
     <string name="vpn_permission_screen_unavailable">Android could not open its VPN approval screen. Open VPN settings, then try again.</string>
     <string name="vpn_establish_failed">Android could not create the VPN interface.</string>
@@ -46,12 +73,16 @@
 
     <string name="notification_channel">Drover VPN</string>
     <string name="notification_title">Drover is running for Discord</string>
-    <string name="notification_text">The selected Discord app is using local compatibility processing.</string>
+    <string name="notification_title_app">Drover is running for %1$s</string>
+    <string name="notification_text">The selected app is routed through the local Drover lab.</string>
+    <string name="notification_text_discord">Discord is using its existing local compatibility strategy.</string>
+    <string name="notification_text_whatsapp">WhatsApp is in observe-only mode; packet contents are never recorded.</string>
     <string name="stop_action">Stop</string>
 
     <string name="attention_notification_channel">Drover setup alerts</string>
     <string name="attention_notification_title">Drover needs attention</string>
     <string name="boot_vpn_permission_required">Open Drover to restore VPN permission before automatic startup can continue.</string>
     <string name="boot_discord_selection_required">Open Drover to choose an installed Discord version.</string>
+    <string name="boot_app_selection_required">Open Drover to choose a supported installed app.</string>
     <string name="boot_start_failed">Drover could not start automatically. Open the app to try again.</string>
 </resources>

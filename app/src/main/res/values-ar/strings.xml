@@ -1,9 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Drover للأندرويد</string>
-    <string name="title">Drover للأندرويد</string>
-    <string name="subtitle">تحسين توافق اتصال Discord الصوتي محليًا على أجهزة أندرويد</string>
-    <string name="privacy_note">يعمل على جهازك فقط. لا خادم، ولا حساب، ولا تحليلات، ولا جمع للبيانات.</string>
+    <string name="app_name">مختبر Drover للأندرويد</string>
+    <string name="title">مختبر Drover للأندرويد</string>
+    <string name="subtitle">توافق Discord ومختبر مراقبة شبكة WhatsApp بدون تعديل متعمد لحمولة الحزم</string>
+    <string name="privacy_note">يبقى السجل على هذا الجهاز ما لم تصدّره بنفسك. لا يرفعه Drover إلى أي جهة.</string>
+
+    <string name="app_kind_discord">Discord</string>
+    <string name="app_kind_whatsapp">WhatsApp</string>
+    <string name="whatsapp_messenger">WhatsApp Messenger</string>
+    <string name="whatsapp_business">WhatsApp Business</string>
+    <string name="selected_target">فئة التطبيق: %1$s</string>
+    <string name="change_target_button">اختيار فئة التطبيق</string>
+    <string name="app_selected">المحدد: %1$s</string>
+    <string name="app_choose_required">توجد أكثر من نسخة من %1$s. اختر واحدة للمتابعة.</string>
+    <string name="app_missing">لم يتم العثور على نسخة مثبتة ومدعومة من %1$s.</string>
+    <string name="app_selection_missing">اختر نسخة %1$s مثبتة قبل تشغيل Drover.</string>
+    <string name="app_launch_failed">تعذّر فتح %1$s. ربما تم تعطيله أو حذفه.</string>
+    <string name="choose_target_title">اختر فئة التطبيق</string>
+    <string name="choose_app_title">اختر نسخة %1$s</string>
+    <string name="choose_app_button">اختيار النسخة</string>
+    <string name="change_app_button">تغيير النسخة</string>
 
     <string name="discord_stable">Discord Stable</string>
     <string name="discord_ptb">Discord PTB</string>
@@ -21,24 +37,35 @@
     <string name="status_starting">جارٍ التشغيل…</string>
     <string name="status_restarting">جارٍ إعادة التشغيل…</string>
     <string name="status_running">يعمل الآن — Discord جاهز للفتح</string>
-    <string name="status_restart_required">تغيرت نسخة Discord — أعد تشغيل Drover لتطبيقها</string>
+    <string name="status_running_app">يعمل الآن — %1$s جاهز للفتح</string>
+    <string name="status_restart_required">تغيّر التطبيق المحدد — أعد تشغيل Drover لتطبيقه</string>
     <string name="status_stopping">جارٍ الإيقاف…</string>
     <string name="status_error">خطأ: %1$s</string>
     <string name="start_and_open_discord">تشغيل وفتح Discord</string>
     <string name="open_discord">فتح Discord</string>
     <string name="restart_and_open_discord">إعادة التشغيل وفتح Discord</string>
+    <string name="start_and_open_app">تشغيل وفتح %1$s</string>
+    <string name="open_app">فتح %1$s</string>
+    <string name="restart_and_open_app">إعادة التشغيل وفتح %1$s</string>
     <string name="stop">إيقاف</string>
 
     <string name="auto_start_on_boot">تشغيل Drover عند تشغيل الجهاز</string>
+    <string name="auto_start_disabled_for_lab">التشغيل التلقائي معطّل أثناء مراقبة WhatsApp</string>
     <string name="auto_start_summary">متوقف افتراضيًا. يشغّل أندرويد خدمة VPN الأمامية بعد الإقلاع فقط بعد منحك إذن VPN. اسمح بالإشعارات لرؤية تنبيهات الإعداد وزر الإيقاف.</string>
     <string name="open_vpn_settings">فتح إعدادات VPN في أندرويد</string>
-    <string name="always_on_note">يدعم Drover وضع VPN الدائم. أبقِ خيار «حظر الاتصالات بدون VPN» متوقفًا لأن Drover يمرر تطبيق Discord المحدد فقط.</string>
+    <string name="always_on_note">وضع VPN الدائم معطّل في نسخة المختبر كي لا تُسجّل بيانات الوجهات من دون تشغيل صريح منك.</string>
     <string name="vpn_settings_unavailable">إعدادات VPN غير متوفرة على هذا الجهاز.</string>
     <string name="open_source_licenses">تراخيص المصادر المفتوحة</string>
     <string name="close">إغلاق</string>
     <string name="licenses_load_failed">تعذّر تحميل إشعارات التراخيص: %1$s</string>
 
-    <string name="how_it_works">يستخدم Drover شبكة VPN محلية مخصصة لنسخة Discord المحددة. تمر اتصالات TCP وUDP مباشرة إلى وجهاتها ولا يُستخدم أي خادم تابع لـDrover. يدخل النفق في الانتظار عند انعدام الحركة، لكن أي VPN عامل يستهلك قدرًا من الذاكرة والطاقة.</string>
+    <string name="how_it_works">يحتفظ Discord بطريقة التوافق الحالية في Drover. يعمل WhatsApp وWhatsApp Business بوضع المراقبة فقط: لا يضيف Drover مقدمة Discord ولا يغيّر عمدًا بايتات حمولة حزم التطبيق. لكنه يظل نفق userspace وقد تتغير منافذ المصدر والتوقيت. لا يستخدم خادم VPN بعيدًا ولا يخفي عنوان IP.</string>
+    <string name="lab_trace_warning">تنبيه المختبر: يحفظ السجل البيانات الوصفية فقط — الوقت والبروتوكول وعنوان IP للوجهة والمنفذ وحجم الحزمة. لا يحفظ محتوى الحزم أو الرسائل أو الصوت أو بيانات الميكروفون. أوقف Drover قبل تصدير السجل.</string>
+    <string name="export_trace">تصدير آخر سجل بيانات وصفية لـWhatsApp</string>
+    <string name="trace_not_ready">لا يوجد سجل مكتمل. شغّل Drover، وجرّب المكالمة، ثم أوقف Drover قبل التصدير.</string>
+    <string name="trace_export_unavailable">أداة اختيار الملفات غير متوفرة على هذا الجهاز.</string>
+    <string name="trace_exported">تم تصدير سجل البيانات الوصفية.</string>
+    <string name="trace_export_failed">تعذّر تصدير سجل البيانات الوصفية.</string>
     <string name="vpn_permission_denied">لم تُمنح صلاحية VPN.</string>
     <string name="vpn_permission_screen_unavailable">تعذّر على أندرويد فتح شاشة الموافقة على VPN. افتح إعدادات VPN ثم حاول مجددًا.</string>
     <string name="vpn_establish_failed">تعذّر على أندرويد إنشاء واجهة VPN.</string>
@@ -46,12 +73,16 @@
 
     <string name="notification_channel">شبكة Drover الخاصة</string>
     <string name="notification_title">Drover يعمل لـDiscord</string>
-    <string name="notification_text">تستخدم نسخة Discord المحددة المعالجة المحلية للتوافق.</string>
+    <string name="notification_title_app">Drover يعمل لـ%1$s</string>
+    <string name="notification_text">يتم تمرير التطبيق المحدد عبر مختبر Drover المحلي.</string>
+    <string name="notification_text_discord">يستخدم Discord طريقة التوافق المحلية الحالية.</string>
+    <string name="notification_text_whatsapp">WhatsApp في وضع المراقبة فقط، ولا يُسجّل محتوى الحزم.</string>
     <string name="stop_action">إيقاف</string>
 
     <string name="attention_notification_channel">تنبيهات إعداد Drover</string>
     <string name="attention_notification_title">Drover يحتاج إلى إجراء</string>
     <string name="boot_vpn_permission_required">افتح Drover لاستعادة إذن VPN قبل متابعة التشغيل التلقائي.</string>
     <string name="boot_discord_selection_required">افتح Drover لاختيار نسخة Discord المثبتة.</string>
+    <string name="boot_app_selection_required">افتح Drover لاختيار تطبيق مثبت ومدعوم.</string>
     <string name="boot_start_failed">تعذّر تشغيل Drover تلقائيًا. افتح التطبيق للمحاولة مجددًا.</string>
 </resources>

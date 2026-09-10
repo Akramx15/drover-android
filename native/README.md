@@ -1,7 +1,8 @@
 # Native engine
 
-Drover for Android bundles a Direct-only build of `tun2proxy` for three Android
-ABIs. The build is pinned to the following inputs:
+Drover bundles a Direct-only build of `tun2proxy` for three Android ABIs. The
+same pinned source patch also builds the experimental iOS XCFramework. The
+inputs are:
 
 - Repository: <https://github.com/tun2proxy/tun2proxy>
 - Commit: `fc77ca3182b3a63b84266bb0a5d24c096e022765`
@@ -42,7 +43,17 @@ The patch intentionally stays narrow:
 6. It reports readiness through the stable JNI bridge only after the TUN,
    `ipstack`, trackers, and session task set are initialized. The app therefore
    never reports `RUNNING` or opens Discord before the packet loop is ready.
-7. It owns TCP and UDP session tasks in a Tokio `JoinSet`. Completed task
+   A matching C callback API provides the same guarantee to the iOS packet
+   tunnel.
+7. It adds an explicit `none` strategy for the WhatsApp lab. That strategy
+   never emits the Discord preamble and preserves private DNS destinations.
+   Discord retains the existing narrow DNS rewrite behavior.
+8. When a lab trace path is explicitly supplied, it writes a fail-closed,
+   1 MiB-bounded JSONL trace containing transport metadata and only the first
+   32 packet lengths in each direction per session. It never passes payload
+   bytes or DNS question names to the writer, and flushes in small batches to
+   avoid perturbing every packet.
+9. It owns TCP and UDP session tasks in a Tokio `JoinSet`. Completed task
    records are reaped as `select` events while the tunnel runs; the empty set
    is guarded, so this adds no background polling or busy loop. Shutdown still
    aborts and joins outstanding tasks while the runtime is alive, then drops
@@ -51,10 +62,13 @@ The patch intentionally stays narrow:
    with a non-blocking signal and task abort, preventing temporary replacement
    workers and shutdown deadlocks. A generation-owned RAII registry keeps the
    old cancellation token registered through complete runtime teardown; an
-   already-cancelled replacement waits on a condition variable, so packet
-   loops cannot overlap and an old cleanup cannot erase a new token. Android
-   does not use tun2proxy's standalone-process emergency-exit timer.
-8. It honors `SOURCE_DATE_EPOCH` and remapped source paths for reproducible
+   already-cancelled Android replacement waits on a condition variable, so
+   packet loops cannot overlap and an old cleanup cannot erase a new token.
+   The iOS callback API instead returns immediately while an earlier generation
+   is draining, allowing NetworkExtension to retry without blocking its start
+   completion. Neither mobile target uses tun2proxy's standalone-process
+   emergency-exit timer.
+10. It honors `SOURCE_DATE_EPOCH` and remapped source paths for reproducible
    release metadata.
 
 ## Rebuild all Android ABIs
@@ -128,7 +142,7 @@ The verified release-library SHA-256 values produced by the pinned Windows x64
 build are:
 
 ```text
-arm64-v8a   3f1afb680a9174d4fa2a3817d86d1c730cd1b43fa45005386a1e2975a993f0cd
-armeabi-v7a fc5b5637b047595c6561acbd3dc78f86fc4bc000d0424bdc1861b7a096a46992
-x86_64      a66c4bf12352ad005e5119cc8e9306834ee7e6ca9b1de0ae3c97ef0d8e7becd3
+arm64-v8a   0d7b1d7f94eaeabc562f953c1128c71cb2d235120edf5382f6901c1ee3239b1e
+armeabi-v7a 3ebb986dd8dc08f320f5b55734ecf68aee4ab55df1d3e720a26c6b45ea829063
+x86_64      2fb87c0c345761438ea093b8dde77d9cb44ae1b9cec322619709e3748c497374
 ```

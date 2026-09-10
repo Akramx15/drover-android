@@ -5,9 +5,13 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.graphics.drawable.Icon;
+import android.net.ConnectivityManager;
+import android.net.LinkProperties;
+import android.net.Network;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.IBinder;
@@ -16,7 +20,13 @@ import android.util.Log;
 
 import com.github.shadowsocks.bg.Tun2proxy;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -30,6 +40,7 @@ public final class DroverVpnService extends VpnService {
 
     private static final String TAG = "DroverAndroid";
     private static final String CHANNEL_ID = "drover_vpn";
+    static final String LAB_TRACE_FILE_NAME = "drover-lab-trace.jsonl";
     private static final int NOTIFICATION_ID = 4207;
     private static final int MTU = 1500;
     private static final AtomicLong NEXT_SERVICE_GENERATION = new AtomicLong();
@@ -82,9 +93,7 @@ public final class DroverVpnService extends VpnService {
         }
 
         boolean restartedByAndroid = intent == null;
-        boolean restartWasRequested = isAlwaysOn()
-                || (DroverPreferences.isAutoStartOnBootEnabled(this)
-                && DroverPreferences.isRunDesired(this));
+        boolean restartWasRequested = isAlwaysOn() || shouldRestartAutomatically();
         if (restartedByAndroid && !restartWasRequested) {
             stopSelf(startId);
             return Service.START_NOT_STICKY;
@@ -148,11 +157,24 @@ public final class DroverVpnService extends VpnService {
     private void runTunnel() {
         boolean unexpectedFailure = false;
         try {
-            List<String> installedPackages = DiscordPackages.findInstalled(this);
-            String selectedPackage = DiscordPackages.resolveSelected(this, installedPackages);
+            AppKind selectedKind = DroverPreferences.getSelectedAppKind(this);
+            List<String> installedPackages = SupportedApps.findInstalled(this, selectedKind);
+            String selectedPackage = SupportedApps.resolveSelected(
+                    this,
+                    selectedKind,
+                    installedPackages
+            );
             if (selectedPackage == null || !installedPackages.contains(selectedPackage)) {
-                throw new IllegalStateException(getString(R.string.discord_selection_missing));
+                throw new IllegalStateException(getString(
+                        R.string.app_selection_missing,
+                        getString(selectedKind.displayNameResource)
+                ));
             }
+
+            File traceFile = selectedKind == AppKind.WHATSAPP
+                    ? prepareLabTraceFile()
+                    : null;
+            UnderlyingNetworkProfile networkProfile = readUnderlyingNetworkProfile();
 
             Builder builder = new Builder()
                     .setSession(getString(R.string.app_name))
@@ -160,13 +182,16 @@ public final class DroverVpnService extends VpnService {
                     .addAddress("10.77.0.1", 32)
                     .addRoute("0.0.0.0", 0)
                     .addAddress("fd42:4242:4242::1", 128)
-                    .addRoute("::", 0)
-                    .addDnsServer("1.1.1.1");
+                    .addRoute("::", 0);
+
+            for (InetAddress dnsServer : networkProfile.dnsServers) {
+                builder.addDnsServer(dnsServer);
+            }
 
             // An empty allow-list would capture every app. Establish the VPN only
-            // after adding the single explicitly selected Discord installation.
+            // after adding the single explicitly selected app installation.
             builder.addAllowedApplication(selectedPackage);
-            builder.setMetered(false);
+            builder.setMetered(networkProfile.metered);
 
             tunInterface = builder.establish();
             if (tunInterface == null) {
@@ -178,11 +203,15 @@ public final class DroverVpnService extends VpnService {
                     + " --close-fd-on-drop false"
                     + " --proxy none"
                     + " --dns direct"
-                    + " --dns-addr 1.1.1.1"
+                    + " --dns-addr " + networkProfile.nativeDnsAddress
                     + " --ipv6-enabled"
                     + " --mtu " + MTU
-                    + " --tcp-mss 1460"
+                    + " --tcp-mss 1440"
                     + " --udp-timeout 120"
+                    + " --drover-strategy " + selectedKind.nativeStrategy
+                    + (traceFile == null
+                    ? ""
+                    : " --lab-trace-file " + shellQuote(traceFile.getAbsolutePath()))
                     + " --verbosity warn";
 
             if (stopRequested.get()) {
@@ -328,10 +357,16 @@ public final class DroverVpnService extends VpnService {
     }
 
     private int restartMode() {
-        boolean restartRequested = isAlwaysOn()
-                || (DroverPreferences.isAutoStartOnBootEnabled(this)
-                && DroverPreferences.isRunDesired(this));
+        boolean restartRequested = isAlwaysOn() || shouldRestartAutomatically();
         return restartRequested ? Service.START_STICKY : Service.START_NOT_STICKY;
+    }
+
+    private boolean shouldRestartAutomatically() {
+        // Metadata observation is deliberately session-scoped and manually
+        // initiated. Discord may still use the existing opt-in boot behavior.
+        return DroverPreferences.getSelectedAppKind(this) != AppKind.WHATSAPP
+                && DroverPreferences.isAutoStartOnBootEnabled(this)
+                && DroverPreferences.isRunDesired(this);
     }
 
     private synchronized void closeTunInterface() {
@@ -361,6 +396,8 @@ public final class DroverVpnService extends VpnService {
     }
 
     private Notification buildNotification() {
+        AppKind selectedKind = DroverPreferences.getSelectedAppKind(this);
+        String appName = getString(selectedKind.displayNameResource);
         Intent openIntent = new Intent(this, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent openPendingIntent = PendingIntent.getActivity(
@@ -380,8 +417,12 @@ public final class DroverVpnService extends VpnService {
 
         return new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_drover)
-                .setContentTitle(getString(R.string.notification_title))
-                .setContentText(getString(R.string.notification_text))
+                .setContentTitle(getString(R.string.notification_title_app, appName))
+                .setContentText(getString(
+                        selectedKind == AppKind.WHATSAPP
+                                ? R.string.notification_text_whatsapp
+                                : R.string.notification_text_discord
+                ))
                 .setContentIntent(openPendingIntent)
                 .setOngoing(true)
                 .setCategory(Notification.CATEGORY_SERVICE)
@@ -403,6 +444,85 @@ public final class DroverVpnService extends VpnService {
         );
         channel.setDescription(getString(R.string.notification_text));
         getSystemService(NotificationManager.class).createNotificationChannel(channel);
+    }
+
+    static File labTraceFile(Context context) {
+        return new File(context.getFilesDir(), LAB_TRACE_FILE_NAME);
+    }
+
+    private File prepareLabTraceFile() throws IOException {
+        File traceFile = labTraceFile(this);
+        // Truncate an older capture before native code appends the new session.
+        // The file stays in private app storage until the user explicitly exports it.
+        try (FileOutputStream ignored = new FileOutputStream(traceFile, false)) {
+            // Opening and closing is enough to create a clean destination.
+        }
+        return traceFile;
+    }
+
+    private UnderlyingNetworkProfile readUnderlyingNetworkProfile() throws IOException {
+        ConnectivityManager connectivity = getSystemService(ConnectivityManager.class);
+        List<InetAddress> dnsServers = Collections.emptyList();
+        boolean metered = true;
+        if (connectivity != null) {
+            try {
+                Network activeNetwork = connectivity.getActiveNetwork();
+                LinkProperties properties = activeNetwork == null
+                        ? null
+                        : connectivity.getLinkProperties(activeNetwork);
+                if (properties != null && !properties.getDnsServers().isEmpty()) {
+                    dnsServers = new ArrayList<>(properties.getDnsServers());
+                }
+                metered = connectivity.isActiveNetworkMetered();
+            } catch (RuntimeException error) {
+                Log.w(TAG, "Could not inspect the underlying network", error);
+            }
+        }
+
+        if (dnsServers.isEmpty()) {
+            try {
+                dnsServers = Collections.singletonList(InetAddress.getByName("1.1.1.1"));
+            } catch (UnknownHostException error) {
+                throw new IOException("Could not create the fallback DNS address", error);
+            }
+        }
+        InetAddress preferredDns = dnsServers.get(0);
+        for (InetAddress candidate : dnsServers) {
+            if (candidate.getAddress().length == 4) {
+                preferredDns = candidate;
+                break;
+            }
+        }
+        final String nativeDnsAddress;
+        try {
+            // Rebuild from raw bytes so an IPv6 link-local scope suffix (for
+            // example "%wlan0") cannot leak into Rust's plain IpAddr parser.
+            nativeDnsAddress = InetAddress.getByAddress(preferredDns.getAddress())
+                    .getHostAddress();
+        } catch (UnknownHostException error) {
+            throw new IOException("Could not normalize the DNS address", error);
+        }
+        return new UnderlyingNetworkProfile(dnsServers, metered, nativeDnsAddress);
+    }
+
+    private static String shellQuote(String value) {
+        return "'" + value.replace("'", "'\"'\"'") + "'";
+    }
+
+    private static final class UnderlyingNetworkProfile {
+        final List<InetAddress> dnsServers;
+        final boolean metered;
+        final String nativeDnsAddress;
+
+        UnderlyingNetworkProfile(
+                List<InetAddress> dnsServers,
+                boolean metered,
+                String nativeDnsAddress
+        ) {
+            this.dnsServers = dnsServers;
+            this.metered = metered;
+            this.nativeDnsAddress = nativeDnsAddress;
+        }
     }
 
     private static String safeMessage(Throwable error) {

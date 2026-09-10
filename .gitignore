@@ -8,6 +8,8 @@ dist/
 keystore/
 *.jks
 *.keystore
+*.p12
+*.mobileprovision
 keystore.properties
 secrets.properties
 .env
@@ -19,5 +21,7 @@ secrets.properties
 **/target/
 .cxx/
 .externalNativeBuild/
+.work/
+ios/Config/WhatsAppPerAppVPN.mobileconfig
 .DS_Store
 Thumbs.db

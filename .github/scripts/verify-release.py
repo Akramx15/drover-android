@@ -65,7 +65,13 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def verify_manifest(aapt2: str, apk: Path) -> None:
+def verify_manifest(
+    aapt2: str,
+    apk: Path,
+    expected_application_id: str,
+    expected_version_code: str,
+    expected_version_name: str,
+) -> None:
     badging = command(aapt2, "dump", "badging", str(apk))
     package_line = next(
         (line for line in badging.splitlines() if line.startswith("package: ")),
@@ -74,11 +80,11 @@ def verify_manifest(aapt2: str, apk: Path) -> None:
     application_id = re.search(r"\bname='([^']+)'", package_line)
     version_code = re.search(r"\bversionCode='([^']+)'", package_line)
     version_name = re.search(r"\bversionName='([^']+)'", package_line)
-    if application_id is None or application_id.group(1) != EXPECTED_APPLICATION_ID:
+    if application_id is None or application_id.group(1) != expected_application_id:
         raise RuntimeError(f"{apk.name}: unexpected application ID in {package_line!r}")
-    if version_name is None or version_name.group(1) != EXPECTED_VERSION_NAME:
+    if version_name is None or version_name.group(1) != expected_version_name:
         raise RuntimeError(f"{apk.name}: unexpected version name in {package_line!r}")
-    if version_code is None or version_code.group(1) != EXPECTED_VERSION_CODE:
+    if version_code is None or version_code.group(1) != expected_version_code:
         raise RuntimeError(f"{apk.name}: unexpected version code in {package_line!r}")
 
     sdk_match = re.search(r"(?m)^minSdkVersion:'([^']+)'$", badging)
@@ -112,7 +118,12 @@ def native_entries(archive: zipfile.ZipFile) -> list[str]:
     ]
 
 
-def validate_license_bundle(data: bytes, source: str) -> str:
+def validate_license_bundle(
+    data: bytes,
+    source: str,
+    expected_package_count: int,
+    expected_project_title: str,
+) -> str:
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError as error:
@@ -123,19 +134,19 @@ def validate_license_bundle(data: bytes, source: str) -> str:
     # between the checked-in asset and each APK remains enforced separately.
     normalized_text = text.replace("\r\n", "\n").replace("\r", "\n")
 
-    expected_header = f"Package count: {EXPECTED_LICENSE_PACKAGE_COUNT}"
+    expected_header = f"Package count: {expected_package_count}"
     if expected_header not in normalized_text:
         raise RuntimeError(f"{source}: missing {expected_header!r}")
     actual_count = len(re.findall(r"(?m)^Package: ", normalized_text))
-    if actual_count != EXPECTED_LICENSE_PACKAGE_COUNT:
+    if actual_count != expected_package_count:
         raise RuntimeError(
-            f"{source}: expected {EXPECTED_LICENSE_PACKAGE_COUNT} license sections, "
+            f"{source}: expected {expected_package_count} license sections, "
             f"found {actual_count}"
         )
     for required in (
         "Package: tun2proxy 0.8.3",
         "Package: ipstack 1.0.2-dev",
-        "Drover for Android\nSource: repository root LICENSE",
+        f"{expected_project_title}\nSource: repository root LICENSE",
         "Copyright (c) 2026 Akramx15",
         "Rust Standard Library 1.97.1",
         "Copyright notices for The Rust Standard Library",
@@ -148,7 +159,12 @@ def validate_license_bundle(data: bytes, source: str) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def verify_license_asset(apk: Path, expected_data: bytes) -> str:
+def verify_license_asset(
+    apk: Path,
+    expected_data: bytes,
+    expected_package_count: int,
+    expected_project_title: str,
+) -> str:
     with zipfile.ZipFile(apk) as archive:
         try:
             actual_data = archive.read(LICENSE_ASSET_ENTRY)
@@ -156,8 +172,18 @@ def verify_license_asset(apk: Path, expected_data: bytes) -> str:
             raise RuntimeError(
                 f"{apk.name}: missing {LICENSE_ASSET_ENTRY}"
             ) from error
-    expected_hash = validate_license_bundle(expected_data, "checked-in license asset")
-    actual_hash = validate_license_bundle(actual_data, apk.name)
+    expected_hash = validate_license_bundle(
+        expected_data,
+        "checked-in license asset",
+        expected_package_count,
+        expected_project_title,
+    )
+    actual_hash = validate_license_bundle(
+        actual_data,
+        apk.name,
+        expected_package_count,
+        expected_project_title,
+    )
     if actual_data != expected_data:
         raise RuntimeError(
             f"{apk.name}: bundled license asset differs from the checked-in asset "
@@ -251,14 +277,40 @@ def main() -> None:
     parser.add_argument("--expected-cert-sha256", required=True)
     parser.add_argument("--license-asset", required=True, type=Path)
     parser.add_argument("--metadata-out", required=True, type=Path)
+    parser.add_argument(
+        "--expected-universal-name", default=EXPECTED_FILES["universal"]
+    )
+    parser.add_argument("--expected-arm64-name", default=EXPECTED_FILES["arm64"])
+    parser.add_argument(
+        "--expected-application-id", default=EXPECTED_APPLICATION_ID
+    )
+    parser.add_argument("--expected-version-code", default=EXPECTED_VERSION_CODE)
+    parser.add_argument("--expected-version-name", default=EXPECTED_VERSION_NAME)
+    parser.add_argument(
+        "--expected-license-package-count",
+        default=EXPECTED_LICENSE_PACKAGE_COUNT,
+        type=int,
+    )
+    parser.add_argument(
+        "--expected-project-license-title", default="Drover for Android"
+    )
     args = parser.parse_args()
 
     if not args.license_asset.is_file():
         raise RuntimeError(f"Missing checked-in license asset: {args.license_asset}")
     expected_license_data = args.license_asset.read_bytes()
-    validate_license_bundle(expected_license_data, str(args.license_asset))
+    validate_license_bundle(
+        expected_license_data,
+        str(args.license_asset),
+        args.expected_license_package_count,
+        args.expected_project_license_title,
+    )
 
     apks = {"universal": args.universal, "arm64": args.arm64}
+    expected_files = {
+        "universal": args.expected_universal_name,
+        "arm64": args.expected_arm64_name,
+    }
     certificates: dict[str, str] = {}
     hashes: dict[str, str] = {}
     license_hashes: dict[str, str] = {}
@@ -266,17 +318,26 @@ def main() -> None:
     for distribution, apk in apks.items():
         if not apk.is_file():
             raise RuntimeError(f"Missing release APK: {apk}")
-        if apk.name != EXPECTED_FILES[distribution]:
+        if apk.name != expected_files[distribution]:
             raise RuntimeError(
                 f"Unexpected asset name {apk.name!r}; "
-                f"expected {EXPECTED_FILES[distribution]!r}"
+                f"expected {expected_files[distribution]!r}"
             )
-        verify_manifest(args.aapt2, apk)
+        verify_manifest(
+            args.aapt2,
+            apk,
+            args.expected_application_id,
+            args.expected_version_code,
+            args.expected_version_name,
+        )
         certificates[distribution] = verify_signature(args.apksigner, apk)
         verify_archive_alignment(args.zipalign, apk)
         verify_native_layout(args.readelf, apk, EXPECTED_ABIS[distribution])
         license_hashes[distribution] = verify_license_asset(
-            apk, expected_license_data
+            apk,
+            expected_license_data,
+            args.expected_license_package_count,
+            args.expected_project_license_title,
         )
         hashes[distribution] = sha256(apk)
 

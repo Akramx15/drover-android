@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Insets;
+import android.net.Uri;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
@@ -19,6 +20,10 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -27,6 +32,7 @@ public final class MainActivity extends Activity {
     private static final String TAG = "DroverAndroid";
     private static final int REQUEST_VPN = 7001;
     private static final int REQUEST_NOTIFICATIONS = 7002;
+    private static final int REQUEST_EXPORT_TRACE = 7003;
 
     private static final int VPN_ACTION_NONE = 0;
     private static final int VPN_ACTION_START = 1;
@@ -42,16 +48,19 @@ public final class MainActivity extends Activity {
     private final SharedPreferences.OnSharedPreferenceChangeListener stateListener =
             (preferences, key) -> runOnUiThread(this::onTunnelStateChanged);
 
-    private TextView discordStatus;
+    private TextView appStatus;
     private TextView tunnelStatus;
     private Button primaryButton;
     private Button stopButton;
-    private Button discordChoiceButton;
+    private Button targetChoiceButton;
+    private Button appChoiceButton;
+    private Button exportTraceButton;
     private Button vpnSettingsButton;
     private Button licensesButton;
     private Switch autoStartSwitch;
 
     private List<String> installedPackages = Collections.emptyList();
+    private AppKind selectedKind = AppKind.DISCORD;
     private String selectedPackage;
     private boolean syncingAutoStartSwitch;
     private boolean pendingOpenAfterStart;
@@ -66,11 +75,13 @@ public final class MainActivity extends Activity {
 
         applySystemBarInsets(findViewById(R.id.root_scroll));
 
-        discordStatus = findViewById(R.id.discord_status);
+        appStatus = findViewById(R.id.app_status);
         tunnelStatus = findViewById(R.id.tunnel_status);
         primaryButton = findViewById(R.id.primary_button);
         stopButton = findViewById(R.id.stop_button);
-        discordChoiceButton = findViewById(R.id.discord_choice_button);
+        targetChoiceButton = findViewById(R.id.target_choice_button);
+        appChoiceButton = findViewById(R.id.app_choice_button);
+        exportTraceButton = findViewById(R.id.export_trace_button);
         vpnSettingsButton = findViewById(R.id.vpn_settings_button);
         licensesButton = findViewById(R.id.licenses_button);
         autoStartSwitch = findViewById(R.id.auto_start_switch);
@@ -93,7 +104,9 @@ public final class MainActivity extends Activity {
 
         primaryButton.setOnClickListener(view -> onPrimaryAction());
         stopButton.setOnClickListener(view -> stopDrover());
-        discordChoiceButton.setOnClickListener(view -> showDiscordChooser(false));
+        targetChoiceButton.setOnClickListener(view -> showTargetChooser());
+        appChoiceButton.setOnClickListener(view -> showAppChooser(false));
+        exportTraceButton.setOnClickListener(view -> exportTrace());
         vpnSettingsButton.setOnClickListener(view -> openVpnSettings());
         licensesButton.setOnClickListener(view -> startActivity(
                 new Intent(this, ThirdPartyLicensesActivity.class)
@@ -109,7 +122,7 @@ public final class MainActivity extends Activity {
     protected void onStart() {
         super.onStart();
         TunnelState.registerListener(this, stateListener);
-        refreshDiscordPackages();
+        refreshSelectedPackages();
         refreshUi();
         handlePendingState(TunnelState.get(this));
     }
@@ -118,7 +131,7 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         // Package installation state can change while Drover is in the background.
-        refreshDiscordPackages();
+        refreshSelectedPackages();
         refreshUi();
     }
 
@@ -141,13 +154,13 @@ public final class MainActivity extends Activity {
     }
 
     private void onPrimaryAction() {
-        refreshDiscordPackages();
+        refreshSelectedPackages();
         if (installedPackages.isEmpty()) {
-            Toast.makeText(this, R.string.discord_missing, Toast.LENGTH_LONG).show();
+            showMissingAppToast();
             return;
         }
         if (selectedPackage == null) {
-            showDiscordChooser(true);
+            showAppChooser(true);
             return;
         }
 
@@ -156,7 +169,7 @@ public final class MainActivity extends Activity {
             if (!selectedPackage.equals(snapshot.activePackage)) {
                 restartDrover(true);
             } else {
-                launchSelectedDiscord();
+                launchSelectedApp();
             }
         } else if (TunnelState.STARTING.equals(snapshot.state)
                 || TunnelState.RESTARTING.equals(snapshot.state)) {
@@ -194,6 +207,12 @@ public final class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_EXPORT_TRACE) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                copyTraceTo(data.getData());
+            }
+            return;
+        }
         if (requestCode != REQUEST_VPN) {
             return;
         }
@@ -240,7 +259,7 @@ public final class MainActivity extends Activity {
 
     private void startDroverService() {
         if (selectedPackage == null || !installedPackages.contains(selectedPackage)) {
-            refreshDiscordPackages();
+            refreshSelectedPackages();
         }
         if (selectedPackage == null) {
             pendingOpenAfterStart = false;
@@ -350,19 +369,76 @@ public final class MainActivity extends Activity {
         return false;
     }
 
-    private void refreshDiscordPackages() {
-        installedPackages = DiscordPackages.findInstalled(this);
-        selectedPackage = DiscordPackages.resolveSelected(this, installedPackages);
+    private void refreshSelectedPackages() {
+        selectedKind = DroverPreferences.getSelectedAppKind(this);
+        installedPackages = SupportedApps.findInstalled(this, selectedKind);
+        selectedPackage = SupportedApps.resolveSelected(
+                this,
+                selectedKind,
+                installedPackages
+        );
     }
 
-    private void showDiscordChooser(boolean continuePrimaryAction) {
-        refreshDiscordPackages();
+    private void showTargetChooser() {
+        AppKind[] choices = {AppKind.DISCORD, AppKind.WHATSAPP};
+        CharSequence[] labels = new CharSequence[choices.length];
+        int checkedItem = 0;
+        for (int index = 0; index < choices.length; index++) {
+            labels[index] = getString(choices[index].displayNameResource);
+            if (choices[index] == selectedKind) {
+                checkedItem = index;
+            }
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.choose_target_title)
+                .setSingleChoiceItems(labels, checkedItem, (dialog, which) -> {
+                    dialog.dismiss();
+                    selectAppKind(choices[which]);
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void selectAppKind(AppKind kind) {
+        AppKind previousKind = selectedKind;
+        String previousPackage = selectedPackage;
+        DroverPreferences.setSelectedAppKind(this, kind);
+        if (kind == AppKind.WHATSAPP) {
+            // A diagnostic trace must always begin with an explicit tap.
+            DroverPreferences.setAutoStartOnBootEnabled(this, false);
+        }
+        refreshSelectedPackages();
+        refreshUi();
+
+        TunnelState.Snapshot snapshot = TunnelState.get(this);
+        boolean active = TunnelState.RUNNING.equals(snapshot.state)
+                || TunnelState.STARTING.equals(snapshot.state);
+        if (!active || (kind == previousKind && same(selectedPackage, previousPackage))) {
+            return;
+        }
+        if (kind == AppKind.WHATSAPP) {
+            // Selecting an observe-only target is not consent to begin a new
+            // diagnostic session. Stop any Discord tunnel and require the
+            // user to tap the explicit start action for WhatsApp.
+            stopDrover();
+            return;
+        }
+        if (selectedPackage == null) {
+            stopDrover();
+        } else {
+            restartDrover(false);
+        }
+    }
+
+    private void showAppChooser(boolean continuePrimaryAction) {
+        refreshSelectedPackages();
         if (installedPackages.isEmpty()) {
-            Toast.makeText(this, R.string.discord_missing, Toast.LENGTH_LONG).show();
+            showMissingAppToast();
             return;
         }
         if (installedPackages.size() == 1) {
-            selectDiscordPackage(installedPackages.get(0), continuePrimaryAction);
+            selectPackage(installedPackages.get(0), continuePrimaryAction);
             return;
         }
 
@@ -371,28 +447,28 @@ public final class MainActivity extends Activity {
         int checkedItem = -1;
         for (int index = 0; index < choices.size(); index++) {
             String packageName = choices.get(index);
-            labels[index] = DiscordPackages.displayName(this, packageName);
+            labels[index] = SupportedApps.displayName(this, packageName);
             if (packageName.equals(selectedPackage)) {
                 checkedItem = index;
             }
         }
 
         new AlertDialog.Builder(this)
-                .setTitle(R.string.choose_discord_title)
+                .setTitle(getString(
+                        R.string.choose_app_title,
+                        getString(selectedKind.displayNameResource)
+                ))
                 .setSingleChoiceItems(labels, checkedItem, (dialog, which) -> {
                     dialog.dismiss();
-                    selectDiscordPackage(
-                            choices.get(which),
-                            continuePrimaryAction
-                    );
+                    selectPackage(choices.get(which), continuePrimaryAction);
                 })
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();
     }
 
-    private void selectDiscordPackage(String packageName, boolean continuePrimaryAction) {
+    private void selectPackage(String packageName, boolean continuePrimaryAction) {
         String previousPackage = selectedPackage;
-        DroverPreferences.setSelectedDiscordPackage(this, packageName);
+        DroverPreferences.setSelectedPackage(this, selectedKind, packageName);
         selectedPackage = packageName;
         refreshUi();
 
@@ -400,7 +476,13 @@ public final class MainActivity extends Activity {
         boolean active = TunnelState.RUNNING.equals(snapshot.state)
                 || TunnelState.STARTING.equals(snapshot.state);
         if (active && !packageName.equals(previousPackage)) {
-            restartDrover(continuePrimaryAction);
+            if (selectedKind == AppKind.WHATSAPP && !continuePrimaryAction) {
+                // Changing the observed installation while a trace is active
+                // ends the session. A fresh one needs another explicit tap.
+                stopDrover();
+            } else {
+                restartDrover(continuePrimaryAction);
+            }
         } else if (continuePrimaryAction) {
             onPrimaryAction();
         }
@@ -418,7 +500,7 @@ public final class MainActivity extends Activity {
         if (pendingOpenAfterStart && TunnelState.RUNNING.equals(snapshot.state)) {
             pendingServiceStartDispatched = false;
             pendingOpenAfterStart = false;
-            launchSelectedDiscord();
+            launchSelectedApp();
         } else if (TunnelState.STARTING.equals(snapshot.state)
                 || TunnelState.RESTARTING.equals(snapshot.state)) {
             // The service has acknowledged the command. A later STOPPED state is
@@ -434,10 +516,10 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void launchSelectedDiscord() {
-        refreshDiscordPackages();
+    private void launchSelectedApp() {
+        refreshSelectedPackages();
         if (selectedPackage == null) {
-            showDiscordChooser(true);
+            showAppChooser(true);
             return;
         }
         TunnelState.Snapshot snapshot = TunnelState.get(this);
@@ -446,11 +528,68 @@ public final class MainActivity extends Activity {
             restartDrover(true);
             return;
         }
-        if (!DiscordPackages.launch(this, selectedPackage)) {
-            refreshDiscordPackages();
-            Toast.makeText(this, R.string.discord_launch_failed, Toast.LENGTH_LONG).show();
+        if (!SupportedApps.launch(this, selectedPackage)) {
+            refreshSelectedPackages();
+            Toast.makeText(
+                    this,
+                    getString(
+                            R.string.app_launch_failed,
+                            getString(selectedKind.displayNameResource)
+                    ),
+                    Toast.LENGTH_LONG
+            ).show();
             refreshUi();
         }
+    }
+
+    private void exportTrace() {
+        File traceFile = DroverVpnService.labTraceFile(this);
+        if (!traceFile.isFile() || traceFile.length() == 0) {
+            Toast.makeText(this, R.string.trace_not_ready, Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("application/x-ndjson")
+                .putExtra(Intent.EXTRA_TITLE, DroverVpnService.LAB_TRACE_FILE_NAME);
+        try {
+            startActivityForResult(intent, REQUEST_EXPORT_TRACE);
+        } catch (RuntimeException error) {
+            Log.w(TAG, "Android document picker is unavailable", error);
+            Toast.makeText(this, R.string.trace_export_unavailable, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void copyTraceTo(Uri destination) {
+        File traceFile = DroverVpnService.labTraceFile(this);
+        try (FileInputStream input = new FileInputStream(traceFile);
+             OutputStream output = getContentResolver().openOutputStream(destination, "wt")) {
+            if (output == null) {
+                throw new IOException("The selected destination could not be opened");
+            }
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                output.write(buffer, 0, count);
+            }
+            output.flush();
+            Toast.makeText(this, R.string.trace_exported, Toast.LENGTH_LONG).show();
+        } catch (IOException | RuntimeException error) {
+            Log.w(TAG, "Could not export lab trace", error);
+            Toast.makeText(this, R.string.trace_export_failed, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void showMissingAppToast() {
+        Toast.makeText(
+                this,
+                getString(
+                        R.string.app_missing,
+                        getString(selectedKind.displayNameResource)
+                ),
+                Toast.LENGTH_LONG
+        ).show();
     }
 
     private void openVpnSettings() {
@@ -471,14 +610,16 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshUi(TunnelState.Snapshot snapshot) {
+        String appName = getString(selectedKind.displayNameResource);
+        targetChoiceButton.setText(getString(R.string.selected_target, appName));
         if (installedPackages.isEmpty()) {
-            discordStatus.setText(R.string.discord_missing);
+            appStatus.setText(getString(R.string.app_missing, appName));
         } else if (selectedPackage == null) {
-            discordStatus.setText(R.string.discord_choose_required);
+            appStatus.setText(getString(R.string.app_choose_required, appName));
         } else {
-            discordStatus.setText(getString(
-                    R.string.discord_selected,
-                    DiscordPackages.displayName(this, selectedPackage)
+            appStatus.setText(getString(
+                    R.string.app_selected,
+                    SupportedApps.displayName(this, selectedPackage)
             ));
         }
 
@@ -495,10 +636,10 @@ public final class MainActivity extends Activity {
                 if (selectedPackage == null
                         || !selectedPackage.equals(snapshot.activePackage)) {
                     tunnelStatus.setText(R.string.status_restart_required);
-                    primaryButton.setText(R.string.restart_and_open_discord);
+                    primaryButton.setText(getString(R.string.restart_and_open_app, appName));
                 } else {
-                    tunnelStatus.setText(R.string.status_running);
-                    primaryButton.setText(R.string.open_discord);
+                    tunnelStatus.setText(getString(R.string.status_running_app, appName));
+                    primaryButton.setText(getString(R.string.open_app, appName));
                 }
                 break;
             case TunnelState.STOPPING:
@@ -507,12 +648,12 @@ public final class MainActivity extends Activity {
                 break;
             case TunnelState.ERROR:
                 tunnelStatus.setText(getString(R.string.status_error, snapshot.detail));
-                primaryButton.setText(R.string.start_and_open_discord);
+                primaryButton.setText(getString(R.string.start_and_open_app, appName));
                 break;
             case TunnelState.STOPPED:
             default:
                 tunnelStatus.setText(R.string.status_stopped);
-                primaryButton.setText(R.string.start_and_open_discord);
+                primaryButton.setText(getString(R.string.start_and_open_app, appName));
                 break;
         }
 
@@ -526,23 +667,44 @@ public final class MainActivity extends Activity {
         // STARTING/RESTARTING are deliberately cancellable. This is also the
         // only in-app escape hatch when notification permission was declined.
         stopButton.setEnabled(stoppable);
-        discordChoiceButton.setVisibility(
+        targetChoiceButton.setEnabled(!busy);
+        appChoiceButton.setVisibility(
                 installedPackages.size() > 1 ? View.VISIBLE : View.GONE
         );
-        discordChoiceButton.setEnabled(!busy);
+        appChoiceButton.setEnabled(!busy);
+        File traceFile = DroverVpnService.labTraceFile(this);
+        exportTraceButton.setVisibility(
+                selectedKind == AppKind.WHATSAPP ? View.VISIBLE : View.GONE
+        );
+        exportTraceButton.setEnabled(
+                selectedKind == AppKind.WHATSAPP
+                        && !busy
+                        && !stoppable
+                        && traceFile.isFile()
+                        && traceFile.length() > 0
+        );
         vpnSettingsButton.setVisibility(
                 areVpnSettingsAvailable() ? View.VISIBLE : View.GONE
         );
 
         primaryButton.setAlpha(primaryButton.isEnabled() ? 1.0f : 0.45f);
         stopButton.setAlpha(stopButton.isEnabled() ? 1.0f : 0.45f);
-        discordChoiceButton.setText(selectedPackage == null
-                ? R.string.choose_discord_button
-                : R.string.change_discord_button);
+        exportTraceButton.setAlpha(exportTraceButton.isEnabled() ? 1.0f : 0.45f);
+        appChoiceButton.setText(selectedPackage == null
+                ? R.string.choose_app_button
+                : R.string.change_app_button);
 
-        setAutoStartSwitchChecked(
-                DroverPreferences.isAutoStartOnBootEnabled(this)
-        );
+        boolean automaticStartAllowed = selectedKind != AppKind.WHATSAPP;
+        if (!automaticStartAllowed) {
+            DroverPreferences.setAutoStartOnBootEnabled(this, false);
+        }
+        autoStartSwitch.setEnabled(automaticStartAllowed);
+        autoStartSwitch.setAlpha(automaticStartAllowed ? 1.0f : 0.45f);
+        autoStartSwitch.setText(automaticStartAllowed
+                ? R.string.auto_start_on_boot
+                : R.string.auto_start_disabled_for_lab);
+        setAutoStartSwitchChecked(automaticStartAllowed
+                && DroverPreferences.isAutoStartOnBootEnabled(this));
     }
 
     private void setAutoStartSwitchChecked(boolean checked) {
@@ -557,6 +719,10 @@ public final class MainActivity extends Activity {
             return error.getClass().getSimpleName();
         }
         return detail;
+    }
+
+    private static boolean same(String left, String right) {
+        return left == null ? right == null : left.equals(right);
     }
 
     private static void applySystemBarInsets(View root) {

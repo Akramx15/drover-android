@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the license bundle embedded in Drover's two APKs."""
+"""Generate the license bundle embedded in Drover's mobile apps."""
 
 from __future__ import annotations
 
@@ -16,13 +16,13 @@ LICENSE_FILE = re.compile(
     r"^(?:licen[sc]e|copying|notice|copyright|unlicense)",
     re.IGNORECASE,
 )
-ANDROID_TARGET = "aarch64-linux-android"
+MOBILE_TARGETS = ("aarch64-linux-android", "aarch64-apple-ios")
 RUST_VERSION = "1.97.1"
-# The inventory is intentionally generated on the supported Windows build host.
-# Linux release runners omit these host-only build dependencies. Keeping them in
-# the bundle is harmless over-compliance, while this small allow-list lets CI
-# prove that every dependency used on either supported host is covered.
-ALLOWED_HOST_SPECIFIC_EXTRAS = {
+# The inventory is a union across supported hosts and mobile targets. Keeping
+# target-inapplicable nodes in either app is harmless over-compliance, while
+# this small allow-list lets CI prove every shipped graph is covered.
+ALLOWED_CROSS_TARGET_EXTRAS = {
+    ("core-foundation-sys", "0.8.7"),
     ("winapi-util", "0.1.11"),
     ("windows-link", "0.2.1"),
     ("windows-sys", "0.52.0"),
@@ -171,8 +171,8 @@ def inventory_rows(path: Path) -> list[tuple[str, str, str, str]]:
             # locked revision after the Cargo semver. Metadata uses semver only.
             values[1] = values[1].split(maxsplit=1)[0]
             rows.append(tuple(values))
-    if len(rows) != 172:
-        raise RuntimeError(f"Expected 172 locked package rows, found {len(rows)}")
+    if len(rows) != 173:
+        raise RuntimeError(f"Expected 173 locked package rows, found {len(rows)}")
     return rows
 
 
@@ -205,28 +205,29 @@ def package_metadata(
 
 
 def resolved_tree_keys(cargo: str, manifest: Path) -> set[tuple[str, str]]:
-    output = command(
-        cargo,
-        "tree",
-        "--target",
-        ANDROID_TARGET,
-        "--no-default-features",
-        "--locked",
-        "--offline",
-        "-e",
-        "normal,build",
-        "--prefix",
-        "none",
-        "--format",
-        "{p}",
-        "--manifest-path",
-        str(manifest),
-    )
     keys: set[tuple[str, str]] = set()
-    for line in output.splitlines():
-        match = re.match(r"^(\S+) v(\S+)", line)
-        if match:
-            keys.add((match.group(1), match.group(2)))
+    for target in MOBILE_TARGETS:
+        output = command(
+            cargo,
+            "tree",
+            "--target",
+            target,
+            "--no-default-features",
+            "--locked",
+            "--offline",
+            "-e",
+            "normal,build",
+            "--prefix",
+            "none",
+            "--format",
+            "{p}",
+            "--manifest-path",
+            str(manifest),
+        )
+        for line in output.splitlines():
+            match = re.match(r"^(\S+) v(\S+)", line)
+            if match:
+                keys.add((match.group(1), match.group(2)))
     if not keys:
         raise RuntimeError("Cargo returned an empty direct-only dependency tree")
     return keys
@@ -246,7 +247,7 @@ def verify_inventory(
         raise RuntimeError(
             f"Dependency inventory omits current-host graph nodes: {sorted(uncovered)}"
         )
-    unexpected_extras = (inventory_keys - tree_keys) - ALLOWED_HOST_SPECIFIC_EXTRAS
+    unexpected_extras = (inventory_keys - tree_keys) - ALLOWED_CROSS_TARGET_EXTRAS
     if unexpected_extras:
         raise RuntimeError(
             "Dependency inventory has unexplained graph nodes: "
@@ -318,7 +319,7 @@ def render(
     rust_notice: str,
 ) -> str:
     sections = [
-        "Drover for Android — bundled open-source licenses",
+        "Drover — bundled open-source licenses",
         "",
         "Generated deterministically from native/Cargo.lock and",
         "DEPENDENCY_LICENSES.md. Do not edit this generated file by hand.",
@@ -333,7 +334,7 @@ def render(
     sections.extend(
         [
             separator,
-            "Drover for Android",
+            "Drover",
             "Source: repository root LICENSE",
             "",
             "--- project license ---",

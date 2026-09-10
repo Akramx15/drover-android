@@ -25,11 +25,24 @@ public final class BootReceiver extends BroadcastReceiver {
             return;
         }
 
-        List<String> installedPackages = DiscordPackages.findInstalled(context);
-        String selectedPackage = DiscordPackages.resolveSelected(context, installedPackages);
+        AppKind selectedKind = DroverPreferences.getSelectedAppKind(context);
+        // Observation traces contain destination metadata. Never begin a
+        // WhatsApp lab capture just because the device rebooted, even if an
+        // older build left the automatic-start preference enabled.
+        if (selectedKind == AppKind.WHATSAPP) {
+            DroverPreferences.setAutoStartOnBootEnabled(context, false);
+            DroverPreferences.setRunDesired(context, false);
+            return;
+        }
+        List<String> installedPackages = SupportedApps.findInstalled(context, selectedKind);
+        String selectedPackage = SupportedApps.resolveSelected(
+                context,
+                selectedKind,
+                installedPackages
+        );
         if (selectedPackage == null) {
             DroverPreferences.setRunDesired(context, false);
-            postAttention(context, R.string.boot_discord_selection_required);
+            postAttention(context, R.string.boot_app_selection_required);
             return;
         }
 
