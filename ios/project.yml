@@ -23,10 +23,6 @@ targets:
       - path: Shared
       - path: ../app/src/main/assets/third_party_licenses.txt
         buildPhase: resources
-    info:
-      path: DroverLab/Info.plist
-    entitlements:
-      path: DroverLab/DroverLab.entitlements
     dependencies:
       - target: PacketTunnel
         embed: true
@@ -48,10 +44,6 @@ targets:
     sources:
       - path: PacketTunnel
       - path: Shared
-    info:
-      path: PacketTunnel/Info.plist
-    entitlements:
-      path: PacketTunnel/PacketTunnel.entitlements
     dependencies:
       - framework: Generated/tun2proxy.xcframework
         embed: false

@@ -61,10 +61,11 @@ one active VPN tunnel at a time.
   trace first; if Android reports an incompatible update, uninstall
   `app.drover.android.lab` and install the new artifact. Uninstalling deletes
   the lab's internal trace and settings.
-- **iOS:** the GitHub CI artifact is an unsigned build for compilation review;
-  it is not an installable IPA. A tester needs a Development-signed build,
-  registered device, Packet Tunnel and App Group entitlements, and the
-  development per-app VPN profile described in [`ios/BUILDING.md`](ios/BUILDING.md).
+- **iOS:** the GitHub CI artifact includes an unsigned device-app archive and
+  an unsigned resign-input IPA; neither is directly installable. A tester needs
+  matching Development signing for the host app and extension, a registered
+  device, Packet Tunnel and App Group entitlements, and the development per-app
+  VPN profile described in [`ios/BUILDING.md`](ios/BUILDING.md).
   Development per-app mapping is ignored by Ad Hoc, TestFlight, and App Store
   provisioning unless WhatsApp and the device are managed through MDM.
 
@@ -123,8 +124,9 @@ Android وiOS يسمحان عادةً بنفق VPN نشط واحد فقط.
   مؤقتًا مختلفًا في كل تشغيل. صدّر السجل أولًا؛ إذا رفض Android التحديث بسبب
   اختلاف التوقيع، احذف `app.drover.android.lab` ثم ثبّت الملف الجديد. حذف
   التطبيق يحذف السجل الداخلي وإعدادات المختبر.
-- **iOS:** ملف GitHub CI غير موقّع ومخصص للتحقق من البناء، وليس IPA قابلًا
-  للتثبيت. يحتاج المختبر إلى Development build موقّع، وجهاز مسجل، وصلاحيتي
-  Packet Tunnel وApp Group، وملف VPN التجريبي المشروح في
+- **iOS:** يتضمن ملف GitHub CI أرشيف تطبيق وIPA مخصصًا لإعادة التوقيع، وكلاهما
+  غير موقّع وغير قابل للتثبيت مباشرة. يحتاج المختبر إلى توقيع Development
+  متطابق للتطبيق والامتداد، وجهاز مسجل، وصلاحيتي Packet Tunnel وApp Group،
+  وملف VPN التجريبي المشروح في
   [`ios/BUILDING.md`](ios/BUILDING.md). لا يعمل تعيين VPN لكل تطبيق مع توقيع
   Ad Hoc أو TestFlight أو App Store إلا إذا كان الجهاز وWhatsApp مُدارين عبر MDM.

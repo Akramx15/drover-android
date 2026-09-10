@@ -136,9 +136,10 @@ loss or voice dropouts.
 ## Build from source
 
 The `0.3.0-alpha.1` experiment is intentionally kept separate from the stable
-`0.2.0` release path. Its CI artifacts contain lab APKs and an **unsigned** iOS
-device build for compilation review. The iOS artifact is not an installable
-IPA; development signing and per-app VPN prerequisites are documented in
+`0.2.0` release path. Its CI artifacts contain lab APKs, an **unsigned** iOS
+device-app archive, and an unsigned resign-input IPA. Neither iOS file is
+installable until both the host app and extension receive matching Development
+signing. The signing and per-app VPN prerequisites are documented in
 [`ios/BUILDING.md`](ios/BUILDING.md).
 
 Requirements:

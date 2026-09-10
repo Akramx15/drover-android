@@ -17,6 +17,13 @@
   output is for build inspection and is not an installable IPA.
 - Add separate lab CI for Android APK artifacts, the patched Apple XCFramework,
   XcodeGen 2.46.0 project generation, and an unsigned iOS device build.
+- Keep the tracked iOS Info.plist and entitlement files as the source of truth
+  instead of allowing XcodeGen to replace the required WhatsApp mapping,
+  Packet Tunnel declaration, Network Extension, and App Group metadata.
+- Build the unsigned iOS artifact in Release mode, fail CI when required bundle
+  metadata or unsigned-state checks fail, and include a resign-input IPA. It is
+  not installable until the app and extension receive matching Development
+  profiles.
 - Add a tag-gated, fail-closed Android pre-release workflow that publishes only
   signed Universal and ARM64 APKs for `v0.3.0-alpha.1`; no iOS signing material
   or IPA is published.

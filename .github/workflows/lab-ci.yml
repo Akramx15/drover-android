@@ -183,6 +183,45 @@ jobs:
           set -euo pipefail
           cd ios
           "$XCODEGEN" generate --spec project.yml
+          cd ..
+          git diff --exit-code -- \
+            ios/DroverLab/Info.plist \
+            ios/DroverLab/DroverLab.entitlements \
+            ios/PacketTunnel/Info.plist \
+            ios/PacketTunnel/PacketTunnel.entitlements
+          PLIST_BUDDY=/usr/libexec/PlistBuddy
+          for entitlements in \
+            ios/DroverLab/DroverLab.entitlements \
+            ios/PacketTunnel/PacketTunnel.entitlements; do
+            test "$($PLIST_BUDDY -c \
+              'Print :com.apple.developer.networking.networkextension:0' \
+              "$entitlements")" = packet-tunnel-provider
+            test "$($PLIST_BUDDY -c \
+              'Print :com.apple.security.application-groups:0' \
+              "$entitlements")" = group.app.drover.ios.lab
+          done
+          check_setting() {
+            local target="$1"
+            local key="$2"
+            local expected="$3"
+            local settings="$RUNNER_TEMP/${target}-release-build-settings.txt"
+            if [[ ! -f "$settings" ]]; then
+              xcodebuild \
+                -project ios/DroverLab.xcodeproj \
+                -target "$target" \
+                -configuration Release \
+                -showBuildSettings > "$settings"
+            fi
+            local actual
+            actual="$(sed -n "s/^[[:space:]]*$key = //p" "$settings" | tail -n 1)"
+            test "$actual" = "$expected"
+          }
+          check_setting DroverLab INFOPLIST_FILE DroverLab/Info.plist
+          check_setting DroverLab CODE_SIGN_ENTITLEMENTS DroverLab/DroverLab.entitlements
+          check_setting DroverLab GENERATE_INFOPLIST_FILE NO
+          check_setting PacketTunnel INFOPLIST_FILE PacketTunnel/Info.plist
+          check_setting PacketTunnel CODE_SIGN_ENTITLEMENTS PacketTunnel/PacketTunnel.entitlements
+          check_setting PacketTunnel GENERATE_INFOPLIST_FILE NO
 
       - name: Build for an iOS device without signing
         shell: bash
@@ -191,7 +230,7 @@ jobs:
           xcodebuild \
             -project ios/DroverLab.xcodeproj \
             -scheme DroverLab \
-            -configuration Debug \
+            -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/DroverLabDerivedData" \
@@ -199,27 +238,108 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             build
 
+      - name: Verify built iOS metadata and unsigned state
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/DroverLabDerivedData/Build/Products/Release-iphoneos/Drover Lab.app"
+          EXTENSION="$APP/PlugIns/PacketTunnel.appex"
+          PLIST_BUDDY=/usr/libexec/PlistBuddy
+          MAPPING_ID=1D4D3F5C-8948-4B6D-9D3C-62C9C22E181B
+
+          test -d "$EXTENSION"
+          test "$($PLIST_BUDDY -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" = \
+            app.drover.ios.lab
+          test "$($PLIST_BUDDY -c "Print :NETestAppMapping:$MAPPING_ID:0" "$APP/Info.plist")" = \
+            net.whatsapp.WhatsApp
+          test "$($PLIST_BUDDY -c "Print :NETestAppMapping:$MAPPING_ID:1" "$APP/Info.plist")" = \
+            net.whatsapp.WhatsAppSMB
+          test "$($PLIST_BUDDY -c 'Print :CFBundleIdentifier' "$EXTENSION/Info.plist")" = \
+            app.drover.ios.lab.PacketTunnel
+          test "$($PLIST_BUDDY -c 'Print :NSExtension:NSExtensionPointIdentifier' "$EXTENSION/Info.plist")" = \
+            com.apple.networkextension.packet-tunnel
+          test "$($PLIST_BUDDY -c 'Print :NSExtension:NSExtensionPrincipalClass' "$EXTENSION/Info.plist")" = \
+            PacketTunnel.PacketTunnelProvider
+          file "$APP/Drover Lab" | grep -F arm64
+          file "$EXTENSION/PacketTunnel" | grep -F arm64
+          if find "$APP" \
+            \( -name _CodeSignature -o -name CodeResources \
+               -o -name embedded.mobileprovision -o -iname '*.p12' \
+               -o -iname '*.p8' -o -iname '*.pem' -o -iname '*.key' \) \
+            -print -quit | grep . >/dev/null; then
+            echo 'Unsigned product unexpectedly contains signing material.' >&2
+            exit 1
+          fi
+          for executable in "$APP/Drover Lab" "$EXTENSION/PacketTunnel"; do
+            if otool -l "$executable" | grep -F LC_CODE_SIGNATURE >/dev/null; then
+              echo "Unsigned executable contains a code-signature load command: $executable" >&2
+              exit 1
+            fi
+          done
+
       - name: Stage the unsigned iOS result
         shell: bash
         run: |
           set -euo pipefail
-          PRODUCT="$RUNNER_TEMP/DroverLabDerivedData/Build/Products/Debug-iphoneos/Drover Lab.app"
+          PRODUCT="$RUNNER_TEMP/DroverLabDerivedData/Build/Products/Release-iphoneos/Drover Lab.app"
+          IPA_ROOT="$RUNNER_TEMP/DroverLabUnsignedIpa"
+          IPA="$GITHUB_WORKSPACE/dist/ios/DroverLab-v0.3.0-alpha.1-unsigned-resign-input.ipa"
           test -d "$PRODUCT"
           test -f "$PRODUCT/third_party_licenses.txt"
           mkdir -p dist/ios
           ditto -c -k --sequesterRsrc --keepParent \
             "$PRODUCT" \
             dist/ios/DroverLab-v0.3.0-alpha.1-unsigned-device-app.zip
+          mkdir -p "$IPA_ROOT/Payload"
+          ditto "$PRODUCT" "$IPA_ROOT/Payload/Drover Lab.app"
+          (
+            cd "$IPA_ROOT"
+            ditto -c -k --sequesterRsrc --keepParent \
+              Payload \
+              "$IPA"
+          )
+          unzip -tqq "$IPA"
+          unzip -Z1 "$IPA" | grep -Fx \
+            'Payload/Drover Lab.app/PlugIns/PacketTunnel.appex/Info.plist'
+          if unzip -Z1 "$IPA" | grep -E \
+            '(^|/)(_CodeSignature|CodeResources)(/|$)|embedded\.mobileprovision$|\.(p12|p8|pem|key)$'; then
+            echo 'Unsigned IPA unexpectedly contains signing material.' >&2
+            exit 1
+          fi
+          VERIFY_ROOT="$RUNNER_TEMP/DroverLabUnsignedIpaVerify"
+          ditto -x -k "$IPA" "$VERIFY_ROOT"
+          VERIFY_APP="$VERIFY_ROOT/Payload/Drover Lab.app"
+          test -x "$VERIFY_APP/Drover Lab"
+          test -x "$VERIFY_APP/PlugIns/PacketTunnel.appex/PacketTunnel"
+          PLIST_BUDDY=/usr/libexec/PlistBuddy
+          MAPPING_ID=1D4D3F5C-8948-4B6D-9D3C-62C9C22E181B
+          test "$($PLIST_BUDDY -c 'Print :CFBundleIdentifier' "$VERIFY_APP/Info.plist")" = \
+            app.drover.ios.lab
+          test "$($PLIST_BUDDY -c "Print :NETestAppMapping:$MAPPING_ID:0" "$VERIFY_APP/Info.plist")" = \
+            net.whatsapp.WhatsApp
+          test "$($PLIST_BUDDY -c "Print :NETestAppMapping:$MAPPING_ID:1" "$VERIFY_APP/Info.plist")" = \
+            net.whatsapp.WhatsAppSMB
+          test "$($PLIST_BUDDY -c 'Print :CFBundleIdentifier' \
+            "$VERIFY_APP/PlugIns/PacketTunnel.appex/Info.plist")" = \
+            app.drover.ios.lab.PacketTunnel
+          test "$($PLIST_BUDDY -c 'Print :NSExtension:NSExtensionPointIdentifier' \
+            "$VERIFY_APP/PlugIns/PacketTunnel.appex/Info.plist")" = \
+            com.apple.networkextension.packet-tunnel
+          test "$($PLIST_BUDDY -c 'Print :NSExtension:NSExtensionPrincipalClass' \
+            "$VERIFY_APP/PlugIns/PacketTunnel.appex/Info.plist")" = \
+            PacketTunnel.PacketTunnelProvider
           ditto -c -k --sequesterRsrc --keepParent \
             ios/Generated/tun2proxy.xcframework \
             dist/ios/tun2proxy-v0.3.0-alpha.1-apple-xcframework.zip
           (
             cd dist/ios
-            shasum -a 256 *.zip > SHA256SUMS.txt
+            shasum -a 256 *.ipa *.zip > SHA256SUMS.txt
           )
           printf '%s\n' \
-            'UNSIGNED BUILD: this artifact is for compilation review.' \
-            'It is not an installable IPA. See ios/BUILDING.md for Development signing.' \
+            'UNSIGNED BUILD: the resign-input IPA is not directly installable.' \
+            'It contains no Apple certificate, provisioning profile, or registered-device data.' \
+            'Both the host app and PacketTunnel.appex require matching Development signing.' \
+            'Prefer rebuilding and exporting through Xcode; see ios/BUILDING.md.' \
             > dist/ios/README.txt
 
       - name: Upload unsigned iOS build

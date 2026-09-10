@@ -115,6 +115,15 @@ never reads or uploads a `.p12` private key. The registered iPhone must already
 belong to the team. Keep the resulting IPA private because its embedded
 provisioning profile identifies the registered test devices.
 
+CI also packages an `unsigned-resign-input.ipa` for transferring the exact
+compiled device build to a developer Mac. That file is deliberately not
+installable: it contains neither a certificate nor provisioning profiles. A
+certificate alone is insufficient; the tester still needs a private key in the
+Mac keychain, separate Development profiles for the app and packet-tunnel
+extension, the registered device, the App Group, and the Packet Tunnel
+entitlement. Rebuilding and exporting with the script above is the supported
+and safer signing route because Xcode signs nested code in the correct order.
+
 ## 4. Install the development per-app profile
 
 Copy the template without modifying the tracked file:
